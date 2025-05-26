@@ -32,7 +32,7 @@ Pocupochki решает извечную проблему "что же купи�
 ```bash
 git clone https://github.com/yourusername/pocupochki.git
 cd pocupochki
-
+```
 Установите зависимости:
 
 bashcd server && npm install
