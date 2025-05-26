@@ -1,0 +1,74 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="utf-8"/>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Список покупок</title>
+    <link href="https://fonts.googleapis.com/css2?display=swap&family=Manrope%3Awght%40400%3B500%3B700%3B800&family=Noto+Sans%3Awght%40400%3B500%3B700%3B900" rel="stylesheet"/>
+    <link href="data:image/x-icon;base64," rel="icon" type="image/x-icon"/>
+    <link href="css/style.css" rel="stylesheet"/>
+    <!-- Tailwind CDN для простоты, в продакшене лучше собирать -->
+    <script src="https://cdn.tailwindcss.com?plugins=forms,container-queries"></script>
+    <style>
+        /* Можно оставить здесь специфичные для Tailwind хаки или небольшие переопределения, если Tailwind CDN используется */
+        body {
+             font-family: Manrope, "Noto Sans", sans-serif; /* Tailwind не всегда подхватывает из link-ов для body */
+        }
+    </style>
+</head>
+<body class="bg-[#131712] text-white">
+    <div id="app-container">
+        <!-- Сюда будут загружаться mainView.html и editView.html -->
+    </div>
+
+    <!-- Новое нижнее навигационное меню -->
+    <nav id="bottom-navigation" class="fixed bottom-0 left-0 right-0 z-40 print:hidden">
+        <div class="relative h-20 bg-[#1f251d]/80 backdrop-blur-md shadow-[0_-2px_10px_rgba(0,0,0,0.1)] rounded-t-3xl">
+            <!-- Центральная кнопка микрофона -->
+            <button id="navMicButton" aria-label="Голосовой ввод"
+                    class="absolute left-1/2 top-0 -translate-x-1/2 -translate-y-1/2 flex items-center justify-center w-20 h-20 bg-[#53d22c] rounded-full shadow-lg hover:bg-opacity-90 transition-colors focus:outline-none focus:ring-2 focus:ring-[#53d22c] focus:ring-offset-2 focus:ring-offset-[#1f251d] border-4 border-[#1f251d]">
+                <svg id="navMicIcon" fill="none" height="36" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" viewBox="0 0 24 24" width="36" xmlns="http://www.w3.org/2000/svg" class="text-[#131712]">
+                    <path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"></path>
+                    <path d="M19 10v2a7 7 0 0 1-14 0v-2"></path>
+                    <line x1="12" x2="12" y1="19" y2="23"></line>
+                </svg>
+                <svg id="navStopIcon" class="hidden text-[#131712]" fill="currentColor" height="32" viewBox="0 0 24 24" width="32" xmlns="http://www.w3.org/2000/svg">
+                    <rect x="6" y="6" width="12" height="12" rx="1" />
+                </svg>
+            </button>
+            <p id="navMicStatus" class="absolute left-1/2 -translate-x-1/2 text-center text-xs text-gray-400 pointer-events-none" style="top: calc(50% + 28px);"></p>
+
+            <div class="flex items-center justify-between h-full px-4">
+                <!-- Кнопка "Отменить" (заменяет старую) -->
+                <button id="navUndoButton" class="flex-1 text-center text-[#a0aec0] hover:text-white transition-colors text-sm font-medium py-2" disabled>
+                    Отменить (0)
+                </button>
+
+                <div class="w-20"></div> <!-- Пустое место под центральной кнопкой -->
+
+                <!-- Кнопка "Редактировать" / "Список" -->
+                <button id="navToggleButton" class="flex-1 text-center text-[#a0aec0] hover:text-white transition-colors text-sm font-medium py-2">
+                    Редактировать
+                </button>
+            </div>
+        </div>
+    </nav>
+    <!-- Небольшой отступ для контента, чтобы он не перекрывался меню -->
+     <!-- УДАЛИТЬ ЭТОТ DIV: <div class="h-20 print:hidden"></div> -->
+
+
+    <!-- Google GenAI SDK (лучше загружать только при необходимости на странице редактирования) -->
+    <script type="module">
+        // Ensure GoogleGenerativeAI is available globally
+        if (typeof window.GoogleGenerativeAI === 'undefined') {
+            try {
+                const genAIModule = await import('https://esm.run/@google/generative-ai');
+                window.GoogleGenerativeAI = genAIModule.GoogleGenerativeAI; // Assign the class itself
+            } catch (e) {
+                console.error("Failed to load GoogleGenerativeAI module:", e);
+            }
+        }
+    </script>
+      <script type="module" src="js/app.js"></script>
+</body>
+</html>

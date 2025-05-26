@@ -1,0 +1,202 @@
+body {
+    min-height: 100dvh;
+    font-family: Manrope, "Noto Sans", sans-serif;
+    overscroll-behavior-x: none;
+    overflow-x: hidden; /* Предотвратить горизонтальный скролл из-за анимаций */
+    min-height: -webkit-fill-available; 
+}
+
+html {
+    height: -webkit-fill-available;
+ }
+
+/* Стили для SPA-контейнера и анимаций перехода */
+#app-container {
+    position: relative;
+    width: 100%;
+    height: 100vh; /* Занимает всю высоту viewport */
+    /* Для iOS: */
+    height: -webkit-fill-available; 
+    overflow: hidden; /* Предотвращает скролл на body из-за абсолютных .page */
+}
+
+.page {
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%; /* Занимает всю высоту #app-container */
+    background-color: #131712;
+    transition: transform 0.4s ease-in-out;
+    display: flex;
+    flex-direction: column;
+    /* padding-bottom: 80px; --- УБРАТЬ ОТСЮДА, если добавляем к main */
+}
+
+main#editScreen {
+    /* ... ваши текущие стили для editScreen ... */
+    /* overflow-y: auto; */ /* Уже должно быть через custom-scrollbar или явно */
+    /* max-height: ... ; */ /* Важно, чтобы этот max-height учитывал и хедер, и нижнее меню */
+    padding-bottom: 80px; /* Или другая высота вашего нижнего меню + небольшой запас, если нужно */
+}
+
+
+.page .flex-grow { /* Контейнер для хедера и main в ваших partials */
+
+    flex-grow: 1; /* Занимает все доступное место в .page */
+    min-height: 0; /* Для правильной работы flex-grow и overflow в дочерних */
+}
+
+main#editScreen, main#shoppingListMain {
+    flex-grow: 1; /* Занимает все доступное место в .flex-grow после хедера */
+    overflow-y: auto; /* Скролл появляется здесь */
+    padding-bottom: 80px; /* Отступ для нижнего меню + возможно небольшой запас (например, 80px + 1rem) */
+                           /* Например: padding-bottom: calc(80px + 1rem); */
+    /* max-height больше не нужен, если используем flex-grow */
+}
+
+/* Начальные позиции для анимации (когда НЕ активны) */
+body:not(.main-view-active) .page.main-view { /* Если главная не активна, она может быть сдвинута */
+    transform: translateX(-100%); /* или 0, если вы хотите, чтобы она была под активной */
+}
+body:not(.edit-view-active) .page.edit-view { /* Если редактирование не активно, оно справа */
+    transform: translateX(100%);
+}
+
+/* Активные страницы всегда на месте */
+body.main-view-active .page.main-view,
+body.edit-view-active .page.edit-view {
+    transform: translateX(0);
+}
+
+/* Анимации перехода остаются теми же, но теперь они будут работать 
+   относительно новых начальных/конечных состояний, управляемых классами на body */
+body.transition-to-edit .page.main-view { /* Уточняем селектор до .page.main-view */
+    transform: translateX(-100%);
+}
+body.transition-to-edit .page.edit-view { /* Уточняем селектор до .page.edit-view */
+    transform: translateX(0);
+}
+
+body.transition-to-main .page.main-view { /* Уточняем селектор */
+    transform: translateX(0);
+}
+body.transition-to-main .page.edit-view { /* Уточняем селектор */
+    transform: translateX(100%);
+}
+
+
+
+/* Анимация для кнопки микрофона при нажатии */
+#micButton:active {
+    transform: scale(1.15);
+    box-shadow: 0 0 15px 5px rgba(83, 210, 44, 0.5);
+}
+
+/* Стили для D&D из вашего предыдущего edit.html */
+.drag-handle { cursor: grab; }
+.drag-handle:active { cursor: grabbing; }
+.store-section:not(:last-child) { margin-bottom: 1.5rem; } /* из edit.html */
+.dragging { opacity: 0.5; background: #3a4a36 !important; }
+.drag-over-store .product-items-container,
+.drag-over-main {
+    border: 2px dashed #53d22c !important;
+    background-color: rgba(83, 210, 44, 0.1);
+}
+.custom-scrollbar::-webkit-scrollbar { width: 4px; height: 4px; }
+.custom-scrollbar::-webkit-scrollbar-thumb { background-color: #42513e; border-radius: 20px; }
+.custom-scrollbar::-webkit-scrollbar-track { background-color: #1f251d; }
+
+#micButton.recording {
+    animation: pulse-scale 1.5s infinite ease-in-out;
+}
+@keyframes pulse-scale {
+    0% { transform: scale(1); box-shadow: 0 0 0 0 rgba(83, 210, 44, 0.7); }
+    50% { transform: scale(1.1); box-shadow: 0 0 10px 10px rgba(83, 210, 44, 0); }
+    100% { transform: scale(1); box-shadow: 0 0 0 0 rgba(83, 210, 44, 0); }
+}
+
+/* Стили для основного списка покупок (из вашего index.html) */
+.strikethrough {
+    text-decoration: line-through;
+    text-decoration-color: #9ca3af;
+    opacity: 0.6;
+}
+.strikethrough .emoji-icon { filter: grayscale(1); }
+.product-card h2 {
+    display: -webkit-box;
+    -webkit-line-clamp: 2;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    min-height: 2.5em;
+    max-height: 2.5em;
+    line-height: 1.25em;
+}
+.store-filter-active {
+    background-color: #53d22c !important;
+    color: #131712 !important;
+}
+
+/* Остальные стили из ваших index.html и edit.html должны быть сюда перенесены и объединены */
+/* Например, для .product-item, .store-section, .product-card и т.д. */
+/* Важно избегать дублирования и конфликтов ID, если элементы появляются на обеих "страницах" */
+
+.product-item { /* из edit.html */
+    display: flex;
+    align-items: center;
+    gap: 0.5rem; /* gap-2 */
+    padding: 0.75rem; /* p-3 */
+    background-color: #2d372a;
+    border-radius: 0.5rem; /* rounded-lg */
+}
+.product-name-input { /* из edit.html */
+    flex-grow: 1;
+    background-color: transparent;
+    color: white;
+    font-size: 0.875rem; /* text-sm */
+    font-weight: 500; /* font-medium */
+    /* Tailwind focus:ring-0 border-0 p-0 focus:border-[#53d22c] min-w-0 */
+    border: none;
+    padding: 0;
+    min-width: 0;
+}
+.product-name-input:focus {
+    outline: none;
+    border-bottom: 1px solid #53d22c; /* Пример фокуса */
+}
+.unit-input { /* из edit.html */
+    background-color: transparent;
+    color: #9ca3af; /* text-gray-400 */
+    font-size: 0.875rem; /* text-sm */
+    width: 2rem; /* w-8 */
+    text-align: center;
+    border: none;
+    padding: 0;
+}
+.unit-input:focus {
+    outline: none;
+    border-bottom: 1px solid #53d22c;
+}
+
+.product-card { /* из index.html */
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 0.5rem; /* gap-2 */
+    border-radius: 0.75rem; /* rounded-xl */
+    border: 1px solid #42513e;
+    background-color: #1f251d;
+    padding: 0.75rem; /* p-3 */
+    aspect-ratio: 1 / 1;
+    justify-content: center;
+    cursor: pointer;
+    transition: border-color 0.2s;
+}
+.product-card:hover {
+    border-color: #53d22c;
+}
+.emoji-icon { /* Общий, если подходит */
+    font-size: 2.25rem; /* text-4xl или text-3xl */
+}
+/* ... и так далее для всех используемых классов Tailwind ... */

@@ -1,0 +1,836 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="utf-8"/>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <link crossorigin="" href="https://fonts.gstatic.com/" rel="preconnect"/>
+    <link as="style" href="https://fonts.googleapis.com/css2?display=swap&family=Manrope%3Awght%40400%3B500%3B700%3B800&family=Noto+Sans%3Awght%40400%3B500%3B700%3B900" onload="this.rel='stylesheet'" rel="stylesheet"/>
+    <title>Редактирование списка</title>
+    <link href="data:image/x-icon;base64," rel="icon" type="image/x-icon"/>
+    <script src="https://cdn.tailwindcss.com?plugins=forms,container-queries"></script>
+    <!-- Google GenAI SDK -->
+    <script type="module">
+        // Ensure GoogleGenerativeAI is available globally
+        if (typeof window.GoogleGenerativeAI === 'undefined') {
+            try {
+                const genAIModule = await import('https://esm.run/@google/generative-ai');
+                window.GoogleGenerativeAI = genAIModule.GoogleGenerativeAI; // Assign the class itself
+            } catch (e) {
+                console.error("Failed to load GoogleGenerativeAI module:", e);
+            }
+        }
+    </script>
+    <style>
+        body {
+            min-height: 100dvh;
+            font-family: Manrope, "Noto Sans", sans-serif;
+            overscroll-behavior-x: none; /* Prevent pull-to-refresh on horizontal swipe */
+        }
+        .drag-handle { cursor: grab; }
+        .drag-handle:active { cursor: grabbing; }
+        .store-section:not(:last-child) { margin-bottom: 1.5rem; }
+        .dragging { opacity: 0.5; background: #3a4a36 !important; } /* Ensure !important if needed */
+        .drag-over-store .product-items-container, 
+        .drag-over-main { 
+            border: 2px dashed #53d22c !important; 
+            background-color: rgba(83, 210, 44, 0.1);
+        }
+        .custom-scrollbar::-webkit-scrollbar { width: 4px; height: 4px; }
+        .custom-scrollbar::-webkit-scrollbar-thumb { background-color: #42513e; border-radius: 20px; }
+        .custom-scrollbar::-webkit-scrollbar-track { background-color: #1f251d; }
+        
+        #micButton.recording {
+            animation: pulse-scale 1.5s infinite ease-in-out;
+        }
+
+        @keyframes pulse-scale {
+            0% { transform: scale(1); box-shadow: 0 0 0 0 rgba(83, 210, 44, 0.7); }
+            50% { transform: scale(1.1); box-shadow: 0 0 10px 10px rgba(83, 210, 44, 0); }
+            100% { transform: scale(1); box-shadow: 0 0 0 0 rgba(83, 210, 44, 0); }
+        }
+        /*
+        @keyframes pulse-icon-color {
+            0% { color: currentColor; }
+            50% { color: #f87171; } // Example: pulses to red
+            100% { color: currentColor; }
+        }
+        */
+    </style>
+</head>
+<body class="bg-[#131712] text-white">
+    <div class="relative flex size-full min-h-screen flex-col dark justify-between group/design-root overflow-x-hidden" id="editPageContainer">
+        <div class="flex-grow">
+            <header class="sticky top-0 z-20 bg-[#131712]/80 backdrop-blur-sm">
+                <div class="flex items-center p-4 pb-2 justify-between">
+                    <button aria-label="Назад" id="backButton" class="flex cursor-pointer items-center justify-center rounded-full h-10 w-10 bg-transparent text-white hover:bg-[#2d372a] transition-colors">
+                        <svg class="h-6 w-6" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+                            <path d="M15 19l-7-7 7-7" stroke-linecap="round" stroke-linejoin="round" stroke-width="2"></path>
+                        </svg>
+                    </button>
+                    <h1 class="text-white text-xl font-semibold leading-tight tracking-tight flex-1 text-center">Редактирование</h1>
+                    <div class="flex w-10 items-center justify-end"></div>
+                </div>
+            </header>
+
+            <main class="p-4 space-y-6 custom-scrollbar overflow-y-auto" id="editScreen" style="max-height: calc(100vh - 160px); /* Adjusted for footer */">
+                <!-- Магазины и товары будут добавлены сюда JS -->
+                <button id="addStoreButton" class="w-full flex items-center justify-center gap-2 py-3 rounded-lg border-2 border-dashed border-[#42513e] text-[#53d22c] hover:bg-[#2d372a]/50 transition-colors">
+                    <svg fill="none" height="20" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" viewBox="0 0 24 24" width="20" xmlns="http://www.w3.org/2000/svg">
+                        <line x1="12" x2="12" y1="5" y2="19"></line>
+                        <line x1="5" x2="19" y1="12" y2="12"></line>
+                    </svg>
+                    <span>Добавить магазин</span>
+                </button>
+            </main>
+        </div>
+
+        <footer class="sticky bottom-0 z-10 bg-[#131712]/80 backdrop-blur-sm p-4 pb-6">
+            <div class="flex justify-center">
+                <button id="micButton" class="w-16 h-16 rounded-full bg-[#53d22c] text-[#131712] flex items-center justify-center shadow-lg hover:bg-opacity-80 transition-all duration-300 ease-in-out">
+                    <svg id="micIcon" fill="none" height="32" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" viewBox="0 0 24 24" width="32" xmlns="http://www.w3.org/2000/svg">
+                        <path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"></path>
+                        <path d="M19 10v2a7 7 0 0 1-14 0v-2"></path>
+                        <line x1="12" x2="12" y1="19" y2="23"></line>
+                    </svg>
+                    <svg id="stopIcon" class="hidden" fill="currentColor" height="28" viewBox="0 0 24 24" width="28" xmlns="http://www.w3.org/2000/svg">
+                        <rect x="6" y="6" width="12" height="12" rx="1" />
+                    </svg>
+                </button>
+            </div>
+             <p id="micStatus" class="text-center text-xs text-gray-400 mt-2 h-4"></p>
+        </footer>
+    </div>
+
+    <script type="module">
+        let shoppingListData;
+
+        function loadData() {
+            const data = localStorage.getItem('shoppingListData');
+            if (data) {
+                shoppingListData = JSON.parse(data);
+                 // Ensure unique IDs for products if migrating old data or for robustness
+                shoppingListData.stores.forEach(store => {
+                    store.items.forEach(item => {
+                        if (!item.id) item.id = generateId();
+                    });
+                });
+            } else {
+                shoppingListData = { stores: [{ name: "Мой магазин", items: [] }], activeStoreFilter: "Мой магазин" };
+            }
+        }
+
+        function saveData() {
+            localStorage.setItem('shoppingListData', JSON.stringify(shoppingListData));
+        }
+
+        const editScreen = document.getElementById('editScreen');
+        const addStoreButton = document.getElementById('addStoreButton');
+        const backButton = document.getElementById('backButton');
+        const micButton = document.getElementById('micButton');
+        const micIcon = document.getElementById('micIcon');
+        const stopIcon = document.getElementById('stopIcon');
+        const micStatus = document.getElementById('micStatus');
+        const editPageContainer = document.getElementById('editPageContainer');
+
+        function generateId() { return 'item_' + Date.now().toString(36) + Math.random().toString(36).substring(2, 7); }
+
+        function createProductItemDOM(product, storeName) {
+            const itemDiv = document.createElement('div');
+            itemDiv.className = 'product-item flex items-center gap-2 p-3 bg-[#2d372a] rounded-lg'; // Reduced gap
+            itemDiv.dataset.productId = product.id;
+            itemDiv.dataset.storeName = storeName;
+            itemDiv.draggable = true;
+
+            itemDiv.innerHTML = `
+                <button class="drag-handle text-gray-400 hover:text-white transition-colors p-1">
+                    <svg fill="none" height="20" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" viewBox="0 0 24 24" width="20"><circle cx="12" cy="5" r="1"></circle><circle cx="12" cy="12" r="1"></circle><circle cx="12" cy="19" r="1"></circle><circle cx="5" cy="5" r="1"></circle><circle cx="5" cy="12" r="1"></circle><circle cx="5" cy="19" r="1"></circle></svg>
+                </button>
+                <span class="emoji-icon text-3xl">${product.emoji}</span>
+                <input class="product-name-input flex-grow bg-transparent text-white text-sm font-medium focus:ring-0 border-0 p-0 focus:border-[#53d22c] min-w-0" type="text" value="${product.name}">
+                <div class="flex items-center gap-1"> <!-- Reduced gap -->
+                    <button class="quantity-decrease text-gray-400 hover:text-white transition-colors rounded-full w-6 h-6 flex items-center justify-center bg-[#1f251d] hover:bg-[#3a4a36]">
+                        <svg fill="none" height="16" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" viewBox="0 0 24 24" width="16"><line x1="5" x2="19" y1="12" y2="12"></line></svg>
+                    </button>
+                    <span class="quantity-value text-white text-sm w-7 text-center tabular-nums">${product.quantity}</span> <!-- Adjusted width -->
+                    <button class="quantity-increase text-gray-400 hover:text-white transition-colors rounded-full w-6 h-6 flex items-center justify-center bg-[#1f251d] hover:bg-[#3a4a36]">
+                        <svg fill="none" height="16" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" viewBox="0 0 24 24" width="16"><line x1="12" x2="12" y1="5" y2="19"></line><line x1="5" x2="19" y1="12" y2="12"></line></svg>
+                    </button>
+                </div>
+                <input class="unit-input bg-transparent text-gray-400 text-sm w-8 focus:ring-0 border-0 p-0 focus:border-[#53d22c] text-center" type="text" value="${product.unit}"> <!-- Adjusted width -->
+                <!-- ЗАМЕТКИ НАЧАЛО -->
+                <input class="notes-input bg-transparent text-gray-500 text-xs w-24 focus:ring-0 border-0 p-0 focus:border-[#53d22c] ml-2" type="text" placeholder="Заметка..." value="${product.notes || ''}">
+                <!-- ЗАМЕТКИ КОНЕЦ -->
+                <button class="delete-item-button text-red-500 hover:text-red-400 transition-colors p-1">
+                    <svg fill="none" height="18" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" viewBox="0 0 24 24" width="18"><polyline points="3 6 5 6 21 6"></polyline><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path></svg>
+                </button>
+            `;
+            itemDiv.querySelector('.product-name-input').addEventListener('change', (e) => { product.name = e.target.value; saveData(); });
+            itemDiv.querySelector('.unit-input').addEventListener('change', (e) => { product.unit = e.target.value; saveData(); });
+            itemDiv.querySelector('.notes-input').addEventListener('change', (e) => { product.notes = e.target.value; saveData(); }); // <--- ДОБАВЛЕНО
+            itemDiv.querySelector('.quantity-decrease').addEventListener('click', () => updateQuantity(product, -1, itemDiv.querySelector('.quantity-value')));
+            itemDiv.querySelector('.quantity-increase').addEventListener('click', () => updateQuantity(product, 1, itemDiv.querySelector('.quantity-value')));
+            itemDiv.querySelector('.delete-item-button').addEventListener('click', () => deleteProduct(product.id, storeName));
+            
+            itemDiv.addEventListener('dragstart', handleDragStart);
+            itemDiv.addEventListener('dragend', handleDragEnd);
+            return itemDiv;
+        }
+        
+        function createStoreSectionDOM(store) {
+            const section = document.createElement('section');
+            section.className = 'store-section bg-[#1f251d] rounded-xl p-4';
+            section.dataset.storeName = store.name;
+            section.draggable = true; // Make the entire section draggable
+
+            const headerDiv = document.createElement('div');
+            headerDiv.className = 'flex items-center justify-between mb-4';
+            
+            // Wrap drag handle and input for better drag target definition for store
+            const headerDraggablePart = document.createElement('div');
+            headerDraggablePart.className = 'flex items-center gap-2 flex-grow drag-handle'; // Apply drag-handle here for store dragging
+            headerDraggablePart.innerHTML = `
+                <svg fill="none" height="24" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" viewBox="0 0 24 24" width="24"><circle cx="12" cy="5" r="1"></circle><circle cx="12" cy="12" r="1"></circle><circle cx="12" cy="19" r="1"></circle><circle cx="5" cy="5" r="1"></circle><circle cx="5" cy="12" r="1"></circle><circle cx="5" cy="19" r="1"></circle></svg>
+                <input class="store-name-input bg-transparent text-white text-lg font-semibold focus:ring-0 border-0 p-0 focus:border-[#53d22c] w-full" type="text" value="${store.name}">
+            `;
+            
+            const deleteButton = document.createElement('button');
+            deleteButton.className = 'delete-store-button text-red-500 hover:text-red-400 transition-colors p-1';
+            deleteButton.innerHTML = `<svg fill="none" height="20" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" viewBox="0 0 24 24" width="20"><path d="M3 6h18"></path><path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6"></path><path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2"></path></svg>`;
+
+            headerDiv.appendChild(headerDraggablePart);
+            headerDiv.appendChild(deleteButton);
+            
+            const productItemsContainer = document.createElement('div');
+            productItemsContainer.className = 'product-items-container space-y-3';
+            productItemsContainer.dataset.storeName = store.name; // For identifying drop target
+
+            store.items.forEach(product => {
+                productItemsContainer.appendChild(createProductItemDOM(product, store.name));
+            });
+
+            section.appendChild(headerDiv);
+            section.appendChild(productItemsContainer);
+
+            headerDraggablePart.querySelector('.store-name-input').addEventListener('change', (e) => updateStoreName(store.name, e.target.value, section.querySelector('.store-name-input')));
+            deleteButton.addEventListener('click', () => deleteStore(store.name));
+            
+            // Drag events for the store section itself
+            section.addEventListener('dragstart', handleDragStart); // Let the section itself be the drag source
+            section.addEventListener('dragend', handleDragEnd);
+            
+            // Drag events for the product container within the store
+            productItemsContainer.addEventListener('dragover', handleDragOverProductContainer);
+            productItemsContainer.addEventListener('dragleave', handleDragLeaveProductContainer);
+            productItemsContainer.addEventListener('drop', handleDropOnProductContainer);
+
+            return section;
+        }
+
+        function renderEditScreen() {
+            const existingSections = editScreen.querySelectorAll('.store-section');
+            existingSections.forEach(sec => sec.remove());
+            shoppingListData.stores.forEach(store => {
+                const storeSectionDOM = createStoreSectionDOM(store);
+                editScreen.insertBefore(storeSectionDOM, addStoreButton);
+            });
+            saveData();
+        }
+        
+        function addNewProductToStore(storeName, productData) { // This function is used by Gemini response processing
+            let store = shoppingListData.stores.find(s => s.name === storeName);
+            // ... (код создания/поиска магазина) ...
+            if (!store) { 
+                if (shoppingListData.stores.length === 0) {
+                    shoppingListData.stores.push({ name: "Новый магазин", items: [] });
+                    storeName = "Новый магазин"; // Update storeName if a new one was created
+                } else {
+                    shoppingListData.stores.push({ name: storeName, items: [] });
+                }
+                store = shoppingListData.stores.find(s => s.name === storeName);
+            }
+
+            const newProduct = {
+                id: productData.id || generateId(),
+                name: productData.name || "Новый продукт",
+                quantity: parseFloat(productData.quantity) || 1,
+                unit: productData.unit || "шт",
+                emoji: productData.emoji || "🛒",
+                notes: productData.notes || "", // <--- ДОБАВЛЕНО
+                purchased: productData.purchased || false
+            };
+            
+            const existingProductIndex = store.items.findIndex(item => item.id === newProduct.id);
+            if (existingProductIndex > -1) { // Product with this ID already exists in this store, update it
+                store.items[existingProductIndex] = newProduct;
+            } else {
+                store.items.push(newProduct);
+            }
+        }
+
+
+        function updateQuantity(product, change, quantityValueElement) {
+            let currentQuantity = parseFloat(product.quantity);
+            const unit = product.unit.toLowerCase();
+            let step = 1;
+
+            if (unit === "гр" || unit === "г" || unit === "грамм") {
+                step = 50;
+            } else if (unit === "кг" || unit === "килограмм") {
+                step = 0.1;
+            }
+            
+            currentQuantity += (change * step);
+
+            if (unit === "кг" || unit === "л") { 
+                currentQuantity = parseFloat(currentQuantity.toFixed(1));
+            } else {
+                 currentQuantity = Math.round(currentQuantity); 
+            }
+
+            if (currentQuantity < 0 && (unit === "кг" || unit === "гр" || unit === "г" || unit === "л" || unit === "килограмм")) currentQuantity = 0;
+            else if (currentQuantity <= 0 && !(unit === "кг" || unit === "гр" || unit === "г" || unit === "л"|| unit === "килограмм")) currentQuantity = (step > 0 && step < 1) ? step : 1; 
+
+
+            product.quantity = currentQuantity;
+            quantityValueElement.textContent = currentQuantity;
+            saveData();
+        }
+        
+        function updateStoreName(oldName, newName, inputElement) {
+            newName = newName.trim();
+            if (oldName === newName || !newName) {
+                if (inputElement) inputElement.value = oldName; 
+                return;
+            }
+            
+            const storeExists = shoppingListData.stores.find(s => s.name === newName);
+            if (storeExists) {
+                alert("Магазин с таким именем уже существует!");
+                if (inputElement) inputElement.value = oldName;
+                return;
+            }
+
+            const storeToUpdate = shoppingListData.stores.find(s => s.name === oldName);
+            if (storeToUpdate) {
+                storeToUpdate.name = newName;
+                // Update activeStoreFilter if it was the renamed store
+                if (shoppingListData.activeStoreFilter === oldName) {
+                    shoppingListData.activeStoreFilter = newName;
+                }
+                // Update storeName dataset on DOM elements for D&D consistency before re-render
+                const storeSectionDOM = editScreen.querySelector(`.store-section[data-store-name="${oldName}"]`);
+                if (storeSectionDOM) {
+                    storeSectionDOM.dataset.storeName = newName;
+                    const productContainer = storeSectionDOM.querySelector('.product-items-container');
+                    if (productContainer) productContainer.dataset.storeName = newName;
+                    // Update product items' dataset too (though re-render will fix, good for immediate D&D)
+                    storeSectionDOM.querySelectorAll('.product-item').forEach(pi => pi.dataset.storeName = newName);
+                }
+
+                saveData(); 
+                renderEditScreen(); // Re-render to update all DOM references properly
+            }
+        }
+        
+        function deleteStore(storeName) {
+            if (confirm(`Вы уверены, что хотите удалить магазин "${storeName}" и все его товары?`)) {
+                shoppingListData.stores = shoppingListData.stores.filter(s => s.name !== storeName);
+                if (shoppingListData.activeStoreFilter === storeName) {
+                    shoppingListData.activeStoreFilter = "Все"; // Reset filter if deleted store was active
+                }
+                renderEditScreen(); // This calls saveData()
+            }
+        }
+
+        function deleteProduct(productId, storeName) {
+            const store = shoppingListData.stores.find(s => s.name === storeName);
+            if (store) {
+                store.items = store.items.filter(item => item.id !== productId);
+                renderEditScreen(); // This calls saveData()
+            }
+        }
+
+        addStoreButton.addEventListener('click', () => {
+            let newStoreName = "Новый магазин";
+            let counter = 1;
+            while (shoppingListData.stores.find(s => s.name === newStoreName)) {
+                newStoreName = `Новый магазин ${counter++}`;
+            }
+            shoppingListData.stores.push({ name: newStoreName, items: [] });
+            renderEditScreen(); // This calls saveData()
+        });
+
+        backButton.addEventListener('click', () => {
+            window.location.href = 'index.html';
+        });
+        
+        // --- DRAG AND DROP ---
+        let draggedDOMElement = null; 
+        let draggedItemData = null; 
+
+        function handleDragStart(e) {
+            // Ensure the drag starts on the handle or the draggable element itself if no specific handle is targeted initially
+            const productItem = e.target.closest('.product-item');
+            const storeSection = e.target.closest('.store-section');
+
+            if (productItem && (e.target.classList.contains('drag-handle') || e.target.closest('.drag-handle') || e.target === productItem)) {
+                draggedDOMElement = productItem;
+                draggedItemData = { 
+                    type: 'product', 
+                    id: draggedDOMElement.dataset.productId, 
+                    sourceStore: draggedDOMElement.dataset.storeName 
+                };
+            } else if (storeSection && (e.target.classList.contains('drag-handle') || e.target.closest('.drag-handle') || e.target === storeSection || headerDraggablePart.contains(e.target))) {
+                // Check if drag started on the store's specific drag handle area
+                const headerDraggablePart = storeSection.querySelector('.flex.items-center.gap-2.flex-grow.drag-handle');
+                 if (headerDraggablePart && headerDraggablePart.contains(e.target)) {
+                    draggedDOMElement = storeSection;
+                    draggedItemData = { 
+                        type: 'store', 
+                        id: draggedDOMElement.dataset.storeName 
+                    };
+                 } else { // If not on specific handle, but on section, and section is draggable
+                    draggedDOMElement = storeSection;
+                     draggedItemData = { 
+                        type: 'store', 
+                        id: draggedDOMElement.dataset.storeName 
+                    };
+                 }
+            } else {
+                e.preventDefault(); 
+                return;
+            }
+            
+            if (!draggedDOMElement) { e.preventDefault(); return; }
+
+
+            e.dataTransfer.effectAllowed = 'move';
+            e.dataTransfer.setData('text/json', JSON.stringify(draggedItemData));
+            
+            setTimeout(() => { if(draggedDOMElement) draggedDOMElement.classList.add('dragging'); }, 0);
+        }
+
+        function handleDragEnd(e) {
+            if (draggedDOMElement) {
+                draggedDOMElement.classList.remove('dragging');
+            }
+            draggedDOMElement = null;
+            draggedItemData = null;
+            document.querySelectorAll('.drag-over-store, .drag-over-main').forEach(el => {
+                el.classList.remove('drag-over-store', 'drag-over-main');
+            });
+        }
+
+        function handleDragOverProductContainer(e) {
+            e.preventDefault();
+            if (draggedItemData && draggedItemData.type === 'product') {
+                const targetContainer = e.target.closest('.product-items-container');
+                if (targetContainer) {
+                    targetContainer.classList.add('drag-over-store');
+                    e.dataTransfer.dropEffect = 'move';
+                }
+            } else {
+                e.dataTransfer.dropEffect = 'none';
+            }
+        }
+        function handleDragLeaveProductContainer(e) {
+            const targetContainer = e.target.closest('.product-items-container');
+            if (targetContainer && !targetContainer.contains(e.relatedTarget)) { // Check if leaving to outside the container
+                 targetContainer.classList.remove('drag-over-store');
+            }
+        }
+        
+        function handleDropOnProductContainer(e) {
+            e.preventDefault();
+            e.stopPropagation(); // Prevent drop from bubbling to editScreen if it's a product drop
+            const targetProductContainer = e.target.closest('.product-items-container');
+            if (!targetProductContainer) return;
+            targetProductContainer.classList.remove('drag-over-store');
+
+            const data = JSON.parse(e.dataTransfer.getData('text/json'));
+            if (!data || data.type !== 'product') return;
+
+            const { id: productId, sourceStore: sourceStoreName } = data;
+            const targetStoreName = targetProductContainer.dataset.storeName;
+
+            const sourceStore = shoppingListData.stores.find(s => s.name === sourceStoreName);
+            const targetStore = shoppingListData.stores.find(s => s.name === targetStoreName);
+            if (!sourceStore || !targetStore) return;
+
+            const productIndex = sourceStore.items.findIndex(p => p.id === productId);
+            if (productIndex === -1) return;
+            
+            const [productToMove] = sourceStore.items.splice(productIndex, 1);
+            
+            const afterElement = getDragAfterElement(targetProductContainer, e.clientY, '.product-item');
+            if (afterElement == null) { // Drop at the end or in an empty list
+                targetStore.items.push(productToMove);
+            } else {
+                // Find index of 'afterElement' in the targetStore's items array
+                // Note: If targetStore is same as sourceStore, its items array is already modified
+                const targetItemsArray = targetStore.items;
+                let targetIndex = targetItemsArray.findIndex(p => p.id === afterElement.dataset.productId);
+                if (targetIndex === -1 && targetItemsArray.length > 0) { // Should not happen if afterElement is valid
+                    targetIndex = targetItemsArray.length; // Fallback to end
+                } else if (targetIndex === -1 && targetItemsArray.length === 0) {
+                    targetIndex = 0; // Insert at beginning of empty array
+                }
+                targetStore.items.splice(targetIndex, 0, productToMove);
+            }
+            renderEditScreen();
+        }
+        
+        editScreen.addEventListener('dragover', (e) => {
+            e.preventDefault();
+            // Only allow dropping stores onto the main edit screen, not products
+            if (draggedItemData && draggedItemData.type === 'store') {
+                // Check if not dragging over a product container (which has its own dragover)
+                if (!e.target.closest('.product-items-container')) {
+                    editScreen.classList.add('drag-over-main');
+                    e.dataTransfer.dropEffect = 'move';
+                }
+            } else {
+                e.dataTransfer.dropEffect = 'none';
+            }
+        });
+        editScreen.addEventListener('dragleave', (e) => {
+            if (e.target === editScreen || !editScreen.contains(e.relatedTarget)) {
+                editScreen.classList.remove('drag-over-main');
+            }
+        });
+
+        editScreen.addEventListener('drop', (e) => { 
+            e.preventDefault();
+            // This drop is for reordering stores onto the main editScreen area
+            // Ensure it's not a drop that should have been handled by a product container
+            if (e.target.closest('.product-items-container')) {
+                 return; // Let product container handle it
+            }
+            editScreen.classList.remove('drag-over-main');
+            
+            const data = JSON.parse(e.dataTransfer.getData('text/json'));
+            if (!data || data.type !== 'store') return;
+
+            const storeName = data.id;
+            const storeIndex = shoppingListData.stores.findIndex(s => s.name === storeName);
+            if (storeIndex === -1) return;
+
+            const [storeToMove] = shoppingListData.stores.splice(storeIndex, 1);
+            // Determine where to drop the store relative to other .store-section elements
+            const afterElement = getDragAfterElement(editScreen, e.clientY, '.store-section:not(#addStoreButton)'); // Exclude button
+            
+            if (afterElement == null || afterElement === addStoreButton) { // Drop at the end (before addStoreButton)
+                shoppingListData.stores.push(storeToMove);
+            } else {
+                const targetIndex = shoppingListData.stores.findIndex(s => s.name === afterElement.dataset.storeName);
+                shoppingListData.stores.splice(targetIndex, 0, storeToMove);
+            }
+            renderEditScreen();
+        });
+
+        function getDragAfterElement(container, y, childSelector) {
+            const draggableElements = [...container.querySelectorAll(`${childSelector}:not(.dragging)`)];
+            return draggableElements.reduce((closest, child) => {
+                const box = child.getBoundingClientRect();
+                const offset = y - box.top - box.height / 2;
+                if (offset < 0 && offset > closest.offset) {
+                    return { offset: offset, element: child };
+                } else {
+                    return closest;
+                }
+            }, { offset: Number.NEGATIVE_INFINITY }).element;
+        }
+
+        // --- SWIPE NAVIGATION ---
+        let touchstartX = 0;
+        let touchendX = 0;
+        const swipeThreshold = 70; 
+
+        function handleEditScreenGesture() {
+            if (touchendX > touchstartX + swipeThreshold) { // Swipe Right
+                window.location.href = 'index.html';
+            }
+        }
+        editPageContainer.addEventListener('touchstart', e => {
+            // Only capture swipe if not starting on an input or button to avoid conflicts
+            if (e.target.tagName !== 'INPUT' && e.target.tagName !== 'BUTTON' && !e.target.closest('button')) {
+                touchstartX = e.changedTouches[0].screenX;
+            } else {
+                touchstartX = 0; // Reset to prevent swipe if interaction is on a control
+            }
+        }, {passive: true});
+
+        editPageContainer.addEventListener('touchend', e => {
+            if (touchstartX === 0) return; // Swipe not initiated or cancelled
+            touchendX = e.changedTouches[0].screenX;
+            handleEditScreenGesture();
+            touchstartX = 0; // Reset for next touch
+        }, {passive: true});
+
+
+        // --- GEMINI API & VOICE INPUT ---
+        const API_KEY = "YOUR_GEMINI_API_KEY"; // Получите ключ на https://makersuite.google.com/app/apikey
+        let mediaRecorder;
+        let audioChunks = [];
+        let geminiModel;
+        
+        async function initializeGemini() {
+            if (!API_KEY || API_KEY === "YOUR_GEMINI_API_KEY") { // Second part of condition may be redundant now
+                micStatus.textContent = "API ключ Gemini не установлен.";
+                console.error("API ключ Gemini не установлен.");
+                micButton.disabled = true;
+                return null;
+            }
+            try {
+                if (!window.GoogleGenerativeAI) {
+                    console.error("Gemini SDK (GoogleGenerativeAI class) not loaded.");
+                    micStatus.textContent = "Ошибка: Gemini SDK не загружен.";
+                    micButton.disabled = true;
+                    return null;
+                }
+                const genAI = new window.GoogleGenerativeAI(API_KEY);
+                micButton.disabled = false;
+                // Using gemini-1.5-flash-latest as it's a strong candidate for multimodal tasks including audio
+                return genAI.getGenerativeModel({ model: "gemini-1.5-flash-latest" });
+            } catch (error) {
+                console.error("Error initializing Gemini:", error);
+                micStatus.textContent = "Ошибка инициализации Gemini.";
+                micButton.disabled = true;
+                return null;
+            }
+        }
+        
+        micButton.addEventListener('click', async () => {
+            if (micButton.disabled) return;
+
+            if (!geminiModel) {
+                micStatus.textContent = "Инициализация Gemini...";
+                geminiModel = await initializeGemini();
+                if (!geminiModel) {
+                    micStatus.textContent = "Ошибка Gemini. Попробуйте позже.";
+                    return;
+                }
+                 micStatus.textContent = ""; // Clear init message
+            }
+
+            if (mediaRecorder && mediaRecorder.state === "recording") {
+                mediaRecorder.stop();
+                // Visuals and status updated in onstop
+            } else {
+                try {
+                    const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+                    const options = { mimeType: 'audio/webm;codecs=opus' };
+                    if (!MediaRecorder.isTypeSupported(options.mimeType)) {
+                        console.warn(`${options.mimeType} is not Supported, trying audio/webm.`);
+                        options.mimeType = 'audio/webm'; 
+                         if (!MediaRecorder.isTypeSupported(options.mimeType)) {
+                             console.warn(`${options.mimeType} also not Supported, trying default.`);
+                             options.mimeType = ''; 
+                         }
+                    }
+                    mediaRecorder = new MediaRecorder(stream, options.mimeType ? options : undefined);
+                    audioChunks = [];
+
+                    mediaRecorder.ondataavailable = event => {
+                        audioChunks.push(event.data);
+                    };
+
+                    mediaRecorder.onstop = async () => {
+                        micButton.classList.remove('recording', 'bg-red-500');
+                        micButton.classList.add('bg-[#53d22c]');
+                        micIcon.classList.remove('hidden');
+                        stopIcon.classList.add('hidden');
+                        micStatus.textContent = "Обработка аудио...";
+
+                        if (audioChunks.length === 0) {
+                            micStatus.textContent = "Нет аудио данных для отправки.";
+                            stream.getTracks().forEach(track => track.stop()); // Still stop the stream
+                            return;
+                        }
+
+                        const audioBlob = new Blob(audioChunks, { type: mediaRecorder.mimeType || 'audio/webm' });
+                        
+                        // Check blob size - Gemini has limits for inline data (though Files API is for >20MB total request)
+                        // For voice commands, it should be small.
+                        if (audioBlob.size === 0) {
+                             micStatus.textContent = "Записан пустой аудиофайл.";
+                             stream.getTracks().forEach(track => track.stop());
+                             return;
+                        }
+
+                        const reader = new FileReader();
+                        reader.readAsDataURL(audioBlob);
+                        reader.onloadend = async () => {
+                            const base64Audio = reader.result.split(',')[1];
+                            await sendAudioToGemini(base64Audio, audioBlob.type || 'audio/webm');
+                        };
+                        reader.onerror = () => {
+                            micStatus.textContent = "Ошибка чтения аудиофайла.";
+                            console.error("FileReader error");
+                        }
+                        stream.getTracks().forEach(track => track.stop());
+                    };
+                    
+                    mediaRecorder.onerror = (event) => {
+                        console.error("MediaRecorder error:", event.error);
+                        micStatus.textContent = "Ошибка записи: " + event.error.name;
+                        micButton.classList.remove('recording', 'bg-red-500');
+                        micButton.classList.add('bg-[#53d22c]');
+                        micIcon.classList.remove('hidden');
+                        stopIcon.classList.add('hidden');
+                        stream.getTracks().forEach(track => track.stop());
+                    };
+
+                    mediaRecorder.start();
+                    micButton.classList.add('recording', 'bg-red-500'); // Show recording state
+                    micButton.classList.remove('bg-[#53d22c]');
+                    micIcon.classList.add('hidden');
+                    stopIcon.classList.remove('hidden');
+                    micStatus.textContent = "Говорите... Нажмите для остановки.";
+
+                } catch (err) {
+                    console.error("Error accessing microphone or starting recorder:", err);
+                    micStatus.textContent = "Ошибка микрофона: " + err.message;
+                     micButton.classList.remove('recording', 'bg-red-500');
+                     micButton.classList.add('bg-[#53d22c]');
+                     micIcon.classList.remove('hidden');
+                     stopIcon.classList.add('hidden');
+                }
+            }
+        });
+
+        async function sendAudioToGemini(base64Audio, mimeType) {
+            if (!geminiModel) {
+                micStatus.textContent = "Gemini не инициализирован.";
+                return;
+            }
+            micStatus.textContent = "Отправка аудио в Gemini...";
+
+            const currentStoresForPrompt = shoppingListData.stores.map(store => ({
+                name: store.name,
+                items: store.items.map(item => ({ // Only send essential fields Gemini needs to know about
+                    id: item.id, 
+                    name: item.name,
+                    quantity: item.quantity,
+                    unit: item.unit,
+                    emoji: item.emoji
+                    // 'purchased' status is client-side, Gemini doesn't need to decide this.
+                    // It will be preserved based on ID when merging results.
+                }))
+            }));
+            const currentListJSON = JSON.stringify(currentStoresForPrompt, null, 2);
+
+            const prompt = `
+Ты — умный помощник для составления списка покупок.
+Текущий список покупок (в формате JSON):
+\`\`\`json
+${currentListJSON}
+\`\`\`
+
+Пользователь сейчас произнесет голосовую команду. Твоя задача — обновить список покупок на основе этой команды.
+Правила обновления:
+1.  Если пользователь называет продукт, который уже есть в списке (сверяйся по названию и существующему \`id\`), ОБНОВИ его количество, единицу измерения, магазин или заметку, если это указано. НЕ ДОБАВЛЯЙ дубликат существующего продукта (с тем же \`id\`).
+2.  Если пользователь называет новый продукт, ДОБАВЬ его в список.
+3.  Если пользователь указывает магазин (например, "в Магазин А", "в Волли"), помести/перемести продукт в этот магазин. Если магазин не существует, создай его.
+4.  Если магазин НЕ указан, и продукт новый, добавь его в первый магазин из текущего списка. Если список пуст и магазинов нет, создай "Новый магазин" и добавь туда. Если продукт существующий и магазин не указан, оставь его в текущем магазине, если не сказано иное.
+5.  Для каждого продукта ОБЯЗАТЕЛЬНО подбери ОДИН наиболее подходящий эмодзи.
+6.  Если пользователь добавляет к продукту комментарий или условие (например, "если дешевле 1 евро", "только свежие"), запиши этот комментарий в поле "notes" для данного продукта. Если комментарий уже был, обнови его. Если комментария нет, поле "notes" должно быть пустой строкой.
+7.  Сохраняй существующие \`id\` продуктов, если они есть в переданном текущем списке. Для совершенно новых продуктов \`id\` генерировать не нужно, приложение сделает это само.
+
+Верни ОБНОВЛЕННЫЙ ПОЛНЫЙ список магазинов и продуктов СТРОГО в формате JSON-массива объектов магазинов, как в примере ниже.
+Каждый магазин должен содержать 'name' (название магазина) и 'items' (массив продуктов).
+Каждый продукт должен содержать 'name', 'quantity' (число), 'unit' (строка), 'emoji' (один эмодзи), 'notes' (строка, может быть пустой). Если продукт уже существовал в исходном списке, ОБЯЗАТЕЛЬНО включи его оригинальный 'id'.
+
+Пример формата ответа:
+[
+  {
+    "name": "Магазин А",
+    "items": [
+      { "id": "item_abc123", "name": "Молоко", "quantity": 2, "unit": "л", "emoji": "🥛", "notes": "Без лактозы" },
+      { "name": "Хлеб", "quantity": 1, "unit": "шт", "emoji": "🍞", "notes": "" }
+    ]
+  },
+  {
+    "name": "Волли",
+    "items": [
+      { "name": "Морковка", "quantity": 0.5, "unit": "кг", "emoji": "🥕", "notes": "Если крупная" }
+    ]
+  }
+]
+
+Если из аудио ничего не понятно, команда не относится к списку покупок, или если ты не уверен, как правильно обновить, верни ИСХОДНЫЙ список покупок (который был дан тебе в \`currentListJSON\`) без изменений.
+Голосовая команда для обработки: (ниже будут аудио данные)
+`;
+
+            try {
+                const result = await geminiModel.generateContent([
+                    prompt,
+                    { inlineData: { data: base64Audio, mimeType: mimeType } }
+                ]);
+                const response = await result.response;
+                const text = response.text();
+                console.log("Gemini response text:", text);
+
+                let updatedStoresArray;
+                try {
+                    // Try to extract JSON from ```json ... ``` blocks if present
+                    const match = text.match(/```json\s*([\s\S]*?)\s*```/);
+                    const cleanedText = match ? match[1].trim() : text.trim();
+                    updatedStoresArray = JSON.parse(cleanedText);
+                } catch (e) {
+                    console.error("Failed to parse Gemini JSON response:", e, "Raw text:", text);
+                    micStatus.textContent = "Ошибка разбора ответа Gemini.";
+                    return;
+                }
+
+                if (Array.isArray(updatedStoresArray)) {
+                    // Create a map of old items by ID to preserve 'purchased' status
+                    const oldItemsMap = new Map();
+                    shoppingListData.stores.forEach(store => {
+                        store.items.forEach(item => {
+                            oldItemsMap.set(item.id, item);
+                        });
+                    });
+
+                    shoppingListData.stores = updatedStoresArray.map(storeData => ({
+                        name: storeData.name || "Неизвестный магазин",
+                        items: (storeData.items || []).map(itemData => {
+                            const newItemId = itemData.id || generateId();
+                            const oldItem = oldItemsMap.get(itemData.id);
+
+                            return {
+                                id: newItemId,
+                                name: itemData.name || "Неизвестный продукт",
+                                quantity: parseFloat(itemData.quantity) || 1,
+                                unit: itemData.unit || "шт",
+                                emoji: itemData.emoji || "🛒",
+                                notes: itemData.notes || "", // <--- ДОБАВЛЕНО
+                                purchased: oldItem ? oldItem.purchased : false
+                            };
+                        })
+                    }));
+                    renderEditScreen(); // This calls saveData()
+                    micStatus.textContent = "Список обновлен!";
+                } else {
+                    micStatus.textContent = "Не удалось обновить список (неверный формат ответа).";
+                    console.warn("Gemini response was not an array:", updatedStoresArray);
+                }
+
+            } catch (error) {
+                console.error("Error with Gemini API:", error);
+                micStatus.textContent = "Ошибка Gemini: " + (error.message || "Неизвестная ошибка");
+            }
+        }
+
+        // --- INITIALIZATION ---
+        loadData();
+        renderEditScreen();
+        // Initialize Gemini on load, but mic button click will re-check and initialize if needed
+        initializeGemini().then(model => {
+            geminiModel = model;
+            if (!model) micStatus.textContent = "Gemini недоступен.";
+        });
+
+    </script>
+</body>
+</html>

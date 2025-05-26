@@ -1,0 +1,40 @@
+# Dependencies
+node_modules/
+package-lock.json
+
+# Logs
+logs/
+*.log
+npm-debug.log*
+pm2-*.log
+
+# Data files
+server/data/
+*.json
+
+# SSL certificates
+*.pem
+*.crt
+*.key
+
+# Environment variables
+.env
+.env.local
+
+# Old files and backups
+!old/
+*.zip
+*.bak
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# PM2
+.pm2/

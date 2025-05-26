@@ -1,0 +1,51 @@
+<div class="page main-view relative flex size-full min-h-screen flex-col dark justify-between group/design-root overflow-x-hidden" id="mainScreenContainer">
+    <div class="flex-grow">
+        <header class="sticky top-0 z-30 bg-[#131712]/80 backdrop-blur-sm">
+            <div class="flex items-center p-4 pb-2 justify-between">
+                <div class="flex w-12"></div>
+                <h1 class="text-white text-xl font-semibold leading-tight tracking-tight flex-1 text-center">Список покупок</h1>
+                <div class="flex w-12 items-center justify-end">
+                    <button aria-label="Редактировать" id="editListButton" class="flex cursor-pointer items-center justify-center rounded-full h-10 w-10 bg-transparent text-white hover:bg-[#2d372a] transition-colors">
+                        <svg fill="currentColor" height="24px" viewBox="0 0 256 256" width="24px" xmlns="http://www.w3.org/2000/svg">
+                            <path d="M128,72a12,12,0,1,0-12-12A12,12,0,0,0,128,72Zm0,56a12,12,0,1,0,12,12A12,12,0,0,0,128,128Zm0,56a12,12,0,1,0,12,12A12,12,0,0,0,128,184Z"></path>
+                        </svg>
+                    </button>
+                </div>
+            </div>
+            <div class="flex gap-2 px-4 py-2 overflow-x-auto whitespace-nowrap custom-scrollbar" id="storeFiltersContainer">
+                <!-- Фильтры магазинов -->
+            </div>
+        </header>
+        <main class="p-4" id="shoppingListMain">
+            <div class="grid grid-cols-3 gap-3" id="productList">
+                <!-- Карточки продуктов -->
+            </div>
+
+            <!-- Секция для списка заметок к товарам -->
+            <div class="mt-8 hidden" id="productNotesSectionWrapper"> <!-- Добавил mt-8 для отступа сверху, как у purchasedSectionWrapper -->
+                <h2 class="text-lg font-semibold text-white mb-2">Заметки к товарам:</h2>
+                <div class="space-y-1" id="productNotesList">
+                    <!-- Заметки будут добавлены сюда JS -->
+                </div>
+            </div>
+            <!-- Конец секции для списка заметок -->
+
+            <div class="mt-8" id="purchasedSectionWrapper"> <!-- Секция "Купил" -->
+                <div class="flex items-center justify-between w-full py-2">
+                    <button class="flex items-center text-white hover:text-gray-300 transition-colors" id="togglePurchasedList">
+                        <h2 class="text-lg font-semibold">Купил (<span id="purchasedCount">0</span>)</h2>
+                        <svg class="w-5 h-5 transition-transform transform ml-1" fill="none" id="purchasedChevron" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path d="M19 9l-7 7-7-7" stroke-linecap="round" stroke-linejoin="round" stroke-width="2"></path></svg>
+                    </button>
+                    <button id="clearPurchasedButton" class="text-sm text-gray-400 hover:text-red-500 transition-colors">Очистить</button>
+                </div>
+                <div class="purchased-list-container mt-2" id="purchasedListContainer">
+                    <div class="grid grid-cols-3 gap-3 purchased-list" id="purchasedList">
+                        <!-- Купленные товары -->
+                    </div>
+                </div>
+            </div> <!-- Конец purchasedSectionWrapper -->
+
+        </main>
+    </div>
+    <div class="h-16 bg-[#131712]"></div> <!-- Footer spacer -->
+</div>

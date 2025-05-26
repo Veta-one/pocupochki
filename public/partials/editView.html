@@ -1,0 +1,25 @@
+<div class="page edit-view relative flex size-full min-h-screen flex-col dark justify-between group/design-root overflow-x-hidden" id="editPageContainer">
+    <div class="flex-grow">
+        <header class="sticky top-0 z-20 bg-[#131712]/80 backdrop-blur-sm">
+            <div class="flex items-center p-4 pb-2 justify-between">
+                <button aria-label="Назад" id="backButton" class="flex cursor-pointer items-center justify-center rounded-full h-10 w-10 bg-transparent text-white hover:bg-[#2d372a] transition-colors">
+                    <svg class="h-6 w-6" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+                        <path d="M15 19l-7-7 7-7" stroke-linecap="round" stroke-linejoin="round" stroke-width="2"></path>
+                    </svg>
+                </button>
+                <h1 class="text-white text-xl font-semibold leading-tight tracking-tight flex-1 text-center">Редактирование</h1>
+                <div class="flex w-10 items-center justify-end"></div>
+            </div>
+        </header>
+        <main class="p-4 space-y-6 custom-scrollbar overflow-y-auto" id="editScreen";">
+            <!-- Магазины и товары -->
+            <button id="addStoreButton" class="w-full flex items-center justify-center gap-2 py-3 rounded-lg border-2 border-dashed border-[#42513e] text-[#53d22c] hover:bg-[#2d372a]/50 transition-colors">
+                <svg fill="none" height="20" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" viewBox="0 0 24 24" width="20" xmlns="http://www.w3.org/2000/svg">
+                    <line x1="12" x2="12" y1="5" y2="19"></line>
+                    <line x1="5" x2="19" y1="12" y2="12"></line>
+                </svg>
+                <span>Добавить магазин</span>
+            </button>
+        </main>
+    </div>
+</div>
