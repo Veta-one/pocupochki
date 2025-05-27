@@ -29,7 +29,7 @@
 
 **1. Клонируйте репозиторий:**
 ```bash
-git clone https://github.com/yourusername/pocupochki.git
+git clone https://github.com/Veta-one/pocupochki.git
 cd pocupochki
 ```
 **Установите зависимости:**
