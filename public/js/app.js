@@ -244,7 +244,7 @@ async function initializeGlobalGemini() {
         return null;
     }
 
-    const API_KEY = "AIzaSyBo_mIXRJk38ehYtSzfGFXnlRxx7eiBeIM"; // Ваш ключ
+    const API_KEY = "YOUR_GEMINI_API_KEY"; // Получите ключ на https://makersuite.google.com/app/apikey
     if (!API_KEY || API_KEY === "YOUR_GEMINI_API_KEY") {
         console.error("API ключ Gemini не установлен.");
         if(navMicButton) navMicButton.disabled = true;
