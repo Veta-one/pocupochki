@@ -8,14 +8,12 @@ services:
     build: .
     container_name: pocupochki_app
     restart: unless-stopped
+    env_file:
+      - .env
     environment:
       - NODE_ENV=production
       - PORT=3000
-      - MONGO_URI=mongodb://admin:your_super_secret_password_123@mongo:27017/pocupochki_db?authSource=admin
-      - TELEGRAM_BOT_TOKEN=7723730232:AAGGplhHyYfreKQG4fTwwurAunX4Kx4rXLU
-      - OPENROUTER_API_KEY=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
       - WEBAPP_URL=https://shop.vetaone.site
-      # ADMIN_TELEGRAM_ID - первый пользователь станет админом автоматически
     networks:
       - my_server_caddy_net
     deploy:
