@@ -17,7 +17,7 @@ import {
   setAuthToken,
   getDefaultListId,
   getCurrentUser,
-  processVoice
+  processText
 } from './api.js';
 
 // --- Глобальное состояние приложения ---
@@ -36,9 +36,9 @@ const appContainer = document.getElementById('app-container');
 let navBottomNavigation, navMicButton, navMicIcon, navStopIcon, navUndoButton, navToggleButton, navMicStatus;
 let currentUndoButton;
 
-// Микрофон
-let mediaRecorderFromApp;
-let audioChunksFromApp = [];
+// Распознавание речи (Web Speech API)
+let speechRecognition = null;
+let isRecognizing = false;
 
 // --- Авторизация ---
 async function initAuth() {
@@ -199,10 +199,25 @@ function handleInitialData(payload) {
 function handleListUpdated(payload) {
   const { list, stores, items } = payload;
 
+  // Debug: логируем статус purchased для каждого товара
+  console.log('=== handleListUpdated ===');
+  console.log('Items received:', items?.length);
+  items?.forEach(item => {
+    console.log(`  - ${item.name}: purchased=${item.purchased}`);
+  });
+
   shoppingListData = {
     stores: transformToLegacyFormat(stores, items),
     activeStoreFilter: list?.activeStoreFilter || shoppingListData.activeStoreFilter
   };
+
+  // Debug: логируем после трансформации
+  console.log('After transform:');
+  shoppingListData.stores.forEach(store => {
+    store.items.forEach(item => {
+      console.log(`  - ${item.name}: purchased=${item.purchased}`);
+    });
+  });
 
   rerenderCurrentView();
   hapticFeedback('notification', 'success');
@@ -351,104 +366,94 @@ function handleUndoClick() {
   }
 }
 
-// --- Голосовой ввод ---
+// --- Голосовой ввод через Web Speech API ---
+function initSpeechRecognition() {
+  const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+  if (!SpeechRecognition) {
+    console.warn('Web Speech API не поддерживается');
+    return null;
+  }
+
+  const recognition = new SpeechRecognition();
+  recognition.lang = 'ru-RU';
+  recognition.continuous = false;
+  recognition.interimResults = false;
+  recognition.maxAlternatives = 1;
+
+  return recognition;
+}
+
 async function handleGlobalMicButtonClick() {
   if (!navMicButton || navMicButton.disabled) return;
 
-  if (mediaRecorderFromApp && mediaRecorderFromApp.state === "recording") {
-    // Остановить запись
-    mediaRecorderFromApp.stop();
-    updateGlobalMicStatus("Обработка...");
-    navMicButton.classList.remove('recording', 'bg-red-500');
-    navMicButton.classList.add('bg-[#53d22c]');
-    if (navMicIcon) navMicIcon.classList.remove('hidden');
-    if (navStopIcon) navStopIcon.classList.add('hidden');
-  } else {
-    // Начать запись
-    try {
-      updateGlobalMicStatus("Запрос микрофона...");
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+  if (!speechRecognition) {
+    speechRecognition = initSpeechRecognition();
+    if (!speechRecognition) {
+      showAlert('Распознавание речи не поддерживается');
+      return;
+    }
 
-      const options = { mimeType: 'audio/webm;codecs=opus' };
-      if (!MediaRecorder.isTypeSupported(options.mimeType)) {
-        options.mimeType = 'audio/webm';
-        if (!MediaRecorder.isTypeSupported(options.mimeType)) options.mimeType = '';
+    speechRecognition.onresult = async (event) => {
+      const transcript = event.results[0][0].transcript;
+      console.log('Распознано:', transcript);
+      updateGlobalMicStatus("Обработка...");
+
+      try {
+        const result = await processText(currentListId, transcript);
+        if (result.success) {
+          updateGlobalMicStatus(`+${result.created + result.updated} товаров`, 3000);
+          hapticFeedback('notification', 'success');
+        } else {
+          updateGlobalMicStatus("Ошибка", 3000);
+        }
+      } catch (error) {
+        console.error('Text processing error:', error);
+        updateGlobalMicStatus("Ошибка API", 3000);
+        showAlert('Не удалось обработать команду');
       }
+    };
 
-      mediaRecorderFromApp = new MediaRecorder(stream, options.mimeType ? options : undefined);
-      audioChunksFromApp = [];
+    speechRecognition.onend = () => {
+      isRecognizing = false;
+      navMicButton.classList.remove('recording', 'bg-red-500');
+      navMicButton.classList.add('bg-[#53d22c]');
+      if (navMicIcon) navMicIcon.classList.remove('hidden');
+      if (navStopIcon) navStopIcon.classList.add('hidden');
+    };
 
-      mediaRecorderFromApp.ondataavailable = event => audioChunksFromApp.push(event.data);
+    speechRecognition.onerror = (event) => {
+      console.error('Speech recognition error:', event.error);
+      isRecognizing = false;
+      navMicButton.classList.remove('recording', 'bg-red-500');
+      navMicButton.classList.add('bg-[#53d22c]');
+      if (navMicIcon) navMicIcon.classList.remove('hidden');
+      if (navStopIcon) navStopIcon.classList.add('hidden');
 
-      mediaRecorderFromApp.onstop = async () => {
-        navMicButton.classList.remove('recording', 'bg-red-500');
-        navMicButton.classList.add('bg-[#53d22c]');
-        if (navMicIcon) navMicIcon.classList.remove('hidden');
-        if (navStopIcon) navStopIcon.classList.add('hidden');
+      if (event.error === 'no-speech') {
+        updateGlobalMicStatus("Речь не обнаружена", 2000);
+      } else if (event.error === 'not-allowed') {
+        updateGlobalMicStatus("Нет доступа", 3000);
+      } else {
+        updateGlobalMicStatus("Ошибка", 2000);
+      }
+    };
+  }
 
-        updateGlobalMicStatus("Обработка...");
-
-        if (audioChunksFromApp.length === 0) {
-          updateGlobalMicStatus("Нет аудио", 2000);
-          return;
-        }
-
-        const audioBlob = new Blob(audioChunksFromApp, { type: mediaRecorderFromApp.mimeType || 'audio/webm' });
-        if (audioBlob.size === 0) {
-          updateGlobalMicStatus("Пустой файл", 2000);
-          return;
-        }
-
-        // Конвертируем в base64 и отправляем на сервер
-        const reader = new FileReader();
-        reader.readAsDataURL(audioBlob);
-        reader.onloadend = async () => {
-          const base64Audio = reader.result.split(',')[1];
-          const audioMimeType = audioBlob.type || 'audio/webm';
-
-          try {
-            updateGlobalMicStatus("Отправка...");
-            const result = await processVoice(currentListId, base64Audio, audioMimeType);
-
-            if (result.success) {
-              updateGlobalMicStatus(`+${result.created} товаров`, 3000);
-              hapticFeedback('notification', 'success');
-              // Данные придут через WebSocket
-            } else {
-              updateGlobalMicStatus("Ошибка", 3000);
-            }
-          } catch (error) {
-            console.error('Voice processing error:', error);
-            updateGlobalMicStatus("Ошибка API", 3000);
-            showAlert('Не удалось обработать голосовую команду');
-          }
-        };
-
-        stream.getTracks().forEach(track => track.stop());
-      };
-
-      mediaRecorderFromApp.onerror = (event) => {
-        console.error("MediaRecorder error:", event.error);
-        navMicButton.classList.remove('recording', 'bg-red-500');
-        navMicButton.classList.add('bg-[#53d22c]');
-        if (navMicIcon) navMicIcon.classList.remove('hidden');
-        if (navStopIcon) navStopIcon.classList.add('hidden');
-        stream.getTracks().forEach(track => track.stop());
-        updateGlobalMicStatus("Ошибка записи", 3000);
-      };
-
-      mediaRecorderFromApp.start();
+  if (isRecognizing) {
+    speechRecognition.stop();
+  } else {
+    try {
+      speechRecognition.start();
+      isRecognizing = true;
       updateGlobalMicStatus("Говорите...");
       navMicButton.classList.add('recording', 'bg-red-500');
       navMicButton.classList.remove('bg-[#53d22c]');
       if (navMicIcon) navMicIcon.classList.add('hidden');
       if (navStopIcon) navStopIcon.classList.remove('hidden');
       hapticFeedback('impact', 'medium');
-
     } catch (err) {
-      console.error("Error accessing microphone:", err);
-      showAlert("Ошибка доступа к микрофону: " + err.message);
-      updateGlobalMicStatus("Ошибка микрофона", 3000);
+      console.error('Error starting recognition:', err);
+      updateGlobalMicStatus("Ошибка", 2000);
     }
   }
 }

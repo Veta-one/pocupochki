@@ -25,7 +25,9 @@ const actionHistorySchema = new mongoose.Schema({
       'UPDATE_STORE_NAME',
       'VOICE_COMMAND_UPDATE',
       'CLEAR_PURCHASED',
-      'PERMANENTLY_DELETE_PURCHASED'
+      'PERMANENTLY_DELETE_PURCHASED',
+      'TELEGRAM_TEXT_COMMAND',
+      'TELEGRAM_IMAGE_COMMAND'
     ]
   },
   payload: {

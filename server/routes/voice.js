@@ -6,6 +6,7 @@ const Store = require('../models/Store');
 const Item = require('../models/Item');
 const ActionHistory = require('../models/ActionHistory');
 const { notifyAdmin } = require('../services/telegramBot');
+const { broadcastListUpdate } = require('../services/websocket');
 
 const router = express.Router();
 
@@ -51,6 +52,9 @@ router.post('/process', auth, async (req, res) => {
     } else {
       return res.status(400).json({ error: 'audioBase64/mimeType or text is required' });
     }
+
+    // Логируем результат
+    console.log('Voice API result:', JSON.stringify(result, null, 2));
 
     // Проверяем на ошибку
     if (result.error) {
@@ -127,8 +131,8 @@ router.post('/process', auth, async (req, res) => {
       `Голосовая команда: создано ${createdItems.length}, обновлено ${updatedItems.length}`
     );
 
-    // Уведомляем админа об использовании API (опционально, можно убрать)
-    // notifyAdmin(`🎤 @${req.user.username || req.user.firstName} использовал голосовой ввод`);
+    // Рассылаем обновление через WebSocket всем подключённым
+    await broadcastListUpdate(listId);
 
     // Получаем обновлённые данные
     const [stores, items, history] = await Promise.all([

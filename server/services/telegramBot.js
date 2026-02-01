@@ -1,6 +1,10 @@
 const TelegramBot = require('node-telegram-bot-api');
 const User = require('../models/User');
 const List = require('../models/List');
+const Store = require('../models/Store');
+const Item = require('../models/Item');
+const ActionHistory = require('../models/ActionHistory');
+const { processTextCommand, processImageCommand } = require('./openrouterService');
 
 let bot = null;
 let adminId = null;
@@ -232,6 +236,340 @@ function setupHandlers() {
     );
   });
 
+  // Обработка голосовых сообщений
+  bot.on('voice', async (msg) => {
+    const chatId = msg.chat.id;
+    const telegramUser = msg.from;
+
+    try {
+      // Проверяем/создаём пользователя
+      const { user } = await User.findOrCreateFromTelegram(telegramUser);
+
+      if (user.isBanned) {
+        await bot.sendMessage(chatId, '⛔ Ваш аккаунт заблокирован.');
+        return;
+      }
+
+      // Получаем дефолтный список
+      let list = await List.findOne({ ownerId: user.telegramId, isDefault: true });
+      if (!list) {
+        list = await List.createDefaultList(user.telegramId);
+      }
+
+      // Проверяем есть ли транскрипция от Telegram Premium
+      // В новых версиях API транскрипция может прийти отдельным сообщением
+      // Пока отправляем инструкцию
+      await bot.sendMessage(
+        chatId,
+        '🎤 Голосовое сообщение получено!\n\n' +
+        'Для обработки голосовых сообщений, пожалуйста, отправьте *текстом* что нужно добавить в список.\n\n' +
+        'Например: "молоко 2 литра, хлеб, яйца 10 штук"',
+        { parse_mode: 'Markdown' }
+      );
+
+    } catch (error) {
+      console.error('Voice message error:', error);
+      await bot.sendMessage(chatId, '❌ Ошибка обработки голосового сообщения.');
+    }
+  });
+
+  // Обработка изображений (фото списков, скриншоты товаров)
+  bot.on('photo', async (msg) => {
+    const chatId = msg.chat.id;
+    const telegramUser = msg.from;
+
+    try {
+      // Проверяем/создаём пользователя
+      const { user } = await User.findOrCreateFromTelegram(telegramUser);
+
+      if (user.isBanned) {
+        await bot.sendMessage(chatId, '⛔ Ваш аккаунт заблокирован.');
+        return;
+      }
+
+      // Получаем дефолтный список
+      let list = await List.findOne({ ownerId: user.telegramId, isDefault: true });
+      if (!list) {
+        list = await List.createDefaultList(user.telegramId);
+      }
+
+      // Отправляем статус
+      const statusMsg = await bot.sendMessage(chatId, '🖼 Анализирую изображение...');
+
+      // Получаем файл (берём самый большой размер)
+      const photo = msg.photo[msg.photo.length - 1];
+      const file = await bot.getFile(photo.file_id);
+      const fileUrl = `https://api.telegram.org/file/bot${process.env.TELEGRAM_BOT_TOKEN}/${file.file_path}`;
+
+      // Скачиваем изображение
+      const imageResponse = await fetch(fileUrl);
+      const imageBuffer = await imageResponse.arrayBuffer();
+      const imageBase64 = Buffer.from(imageBuffer).toString('base64');
+
+      // Определяем MIME тип
+      const mimeType = file.file_path.endsWith('.png') ? 'image/png' : 'image/jpeg';
+
+      // Получаем текущие товары
+      const currentItems = await Item.find({ listId: list._id, purchased: false }).populate('storeId');
+      const itemsForPrompt = currentItems.map(item => ({
+        name: item.name,
+        quantity: item.quantity,
+        unit: item.unit,
+        storeName: item.storeId?.name || 'Другое'
+      }));
+
+      // Обрабатываем через AI
+      const result = await processImageCommand(imageBase64, mimeType, itemsForPrompt);
+
+      if (result.error) {
+        await bot.editMessageText('❌ ' + result.error, {
+          chat_id: chatId,
+          message_id: statusMsg.message_id
+        });
+        return;
+      }
+
+      // Применяем изменения
+      const createdItems = [];
+
+      if (result.stores) {
+        for (const storeData of result.stores) {
+          let store = await Store.findOne({ listId: list._id, name: storeData.name });
+          if (!store) {
+            store = await Store.createWithOrder(list._id, storeData.name);
+          }
+
+          for (const itemData of storeData.items) {
+            // Проверяем нет ли уже такого товара
+            const existingItem = await Item.findOne({
+              listId: list._id,
+              name: { $regex: new RegExp(`^${escapeRegex(itemData.name)}$`, 'i') },
+              purchased: false
+            });
+
+            if (!existingItem) {
+              const newItem = await Item.createWithOrder({
+                listId: list._id,
+                storeId: store._id,
+                name: itemData.name,
+                quantity: itemData.quantity || 0,
+                unit: itemData.unit || '',
+                emoji: itemData.emoji || '',
+                notes: itemData.notes || ''
+              });
+              createdItems.push(newItem);
+            }
+          }
+        }
+      }
+
+      // Записываем в историю
+      if (createdItems.length > 0) {
+        await ActionHistory.addEntry(
+          list._id,
+          user.telegramId,
+          'TELEGRAM_IMAGE_COMMAND',
+          { created: createdItems.map(i => i._id) },
+          `Изображение: добавлено ${createdItems.length} товаров`
+        );
+
+        // Broadcast через WebSocket
+        try {
+          const { broadcastListUpdate } = require('./websocket');
+          await broadcastListUpdate(list._id.toString());
+        } catch (e) {
+          console.warn('WebSocket broadcast failed:', e.message);
+        }
+      }
+
+      // Формируем ответ
+      let responseText;
+      if (createdItems.length > 0) {
+        responseText = `✅ Добавлено товаров: ${createdItems.length}\n\n`;
+        createdItems.forEach(item => {
+          responseText += `• ${item.emoji || '📦'} ${item.name}`;
+          if (item.quantity > 0) responseText += ` (${item.quantity} ${item.unit || 'шт'})`;
+          responseText += '\n';
+        });
+      } else {
+        responseText = '📋 Товары на изображении уже есть в списке или не удалось распознать новые.';
+      }
+
+      const keyboard = {
+        inline_keyboard: [[
+          {
+            text: '🛒 Открыть список',
+            web_app: { url: process.env.WEBAPP_URL || 'https://shop.vetaone.site' }
+          }
+        ]]
+      };
+
+      await bot.editMessageText(responseText, {
+        chat_id: chatId,
+        message_id: statusMsg.message_id,
+        reply_markup: keyboard
+      });
+
+    } catch (error) {
+      console.error('Photo message error:', error);
+      await bot.sendMessage(chatId, '❌ Ошибка обработки изображения. Попробуйте позже.');
+    }
+  });
+
+  // Обработка текстовых сообщений (не команд)
+  bot.on('text', async (msg) => {
+    // Игнорируем команды
+    if (msg.text.startsWith('/')) return;
+
+    const chatId = msg.chat.id;
+    const telegramUser = msg.from;
+    const text = msg.text.trim();
+
+    // Игнорируем пустые и короткие сообщения
+    if (text.length < 2) return;
+
+    try {
+      // Проверяем/создаём пользователя
+      const { user } = await User.findOrCreateFromTelegram(telegramUser);
+
+      if (user.isBanned) {
+        await bot.sendMessage(chatId, '⛔ Ваш аккаунт заблокирован.');
+        return;
+      }
+
+      // Получаем дефолтный список
+      let list = await List.findOne({ ownerId: user.telegramId, isDefault: true });
+      if (!list) {
+        list = await List.createDefaultList(user.telegramId);
+      }
+
+      // Отправляем статус
+      const statusMsg = await bot.sendMessage(chatId, '⏳ Обрабатываю...');
+
+      // Получаем текущие товары для контекста
+      const currentItems = await Item.find({ listId: list._id, purchased: false }).populate('storeId');
+      const itemsForPrompt = currentItems.map(item => ({
+        name: item.name,
+        quantity: item.quantity,
+        unit: item.unit,
+        notes: item.notes,
+        storeName: item.storeId?.name || 'Другое'
+      }));
+
+      // Обрабатываем через AI
+      const result = await processTextCommand(text, itemsForPrompt);
+
+      if (result.error) {
+        await bot.editMessageText('❌ Не удалось распознать команду.', {
+          chat_id: chatId,
+          message_id: statusMsg.message_id
+        });
+        return;
+      }
+
+      // Применяем изменения
+      const createdItems = [];
+      const updatedItems = [];
+
+      if (result.stores) {
+        for (const storeData of result.stores) {
+          let store = await Store.findOne({ listId: list._id, name: storeData.name });
+          if (!store) {
+            store = await Store.createWithOrder(list._id, storeData.name);
+          }
+
+          for (const itemData of storeData.items) {
+            let existingItem = await Item.findOne({
+              listId: list._id,
+              name: { $regex: new RegExp(`^${escapeRegex(itemData.name)}$`, 'i') },
+              purchased: false
+            });
+
+            if (existingItem) {
+              if (itemData.quantity > 0) existingItem.quantity = itemData.quantity;
+              if (itemData.unit) existingItem.unit = itemData.unit;
+              if (itemData.emoji) existingItem.emoji = itemData.emoji;
+              if (itemData.notes) existingItem.notes = itemData.notes;
+              existingItem.storeId = store._id;
+              await existingItem.save();
+              updatedItems.push(existingItem);
+            } else {
+              const newItem = await Item.createWithOrder({
+                listId: list._id,
+                storeId: store._id,
+                name: itemData.name,
+                quantity: itemData.quantity || 0,
+                unit: itemData.unit || '',
+                emoji: itemData.emoji || '',
+                notes: itemData.notes || ''
+              });
+              createdItems.push(newItem);
+            }
+          }
+        }
+      }
+
+      // Записываем в историю
+      await ActionHistory.addEntry(
+        list._id,
+        user.telegramId,
+        'TELEGRAM_TEXT_COMMAND',
+        { created: createdItems.map(i => i._id), updated: updatedItems.map(i => i._id) },
+        `Telegram: создано ${createdItems.length}, обновлено ${updatedItems.length}`
+      );
+
+      // Broadcast через WebSocket
+      try {
+        const { broadcastListUpdate } = require('./websocket');
+        await broadcastListUpdate(list._id.toString());
+      } catch (e) {
+        console.warn('WebSocket broadcast failed:', e.message);
+      }
+
+      // Формируем ответ
+      const totalAdded = createdItems.length + updatedItems.length;
+      let responseText = `✅ Добавлено товаров: ${totalAdded}\n\n`;
+
+      if (createdItems.length > 0) {
+        responseText += '🆕 *Новые:*\n';
+        createdItems.forEach(item => {
+          responseText += `• ${item.emoji || '📦'} ${item.name}`;
+          if (item.quantity > 0) responseText += ` (${item.quantity} ${item.unit || 'шт'})`;
+          responseText += '\n';
+        });
+      }
+
+      if (updatedItems.length > 0) {
+        responseText += '\n✏️ *Обновлены:*\n';
+        updatedItems.forEach(item => {
+          responseText += `• ${item.emoji || '📦'} ${item.name}`;
+          if (item.quantity > 0) responseText += ` (${item.quantity} ${item.unit || 'шт'})`;
+          responseText += '\n';
+        });
+      }
+
+      const keyboard = {
+        inline_keyboard: [[
+          {
+            text: '🛒 Открыть список',
+            web_app: { url: process.env.WEBAPP_URL || 'https://shop.vetaone.site' }
+          }
+        ]]
+      };
+
+      await bot.editMessageText(responseText, {
+        chat_id: chatId,
+        message_id: statusMsg.message_id,
+        parse_mode: 'Markdown',
+        reply_markup: keyboard
+      });
+
+    } catch (error) {
+      console.error('Text message processing error:', error);
+      await bot.sendMessage(chatId, '❌ Ошибка обработки сообщения. Попробуйте позже.');
+    }
+  });
+
   // Обработка callback_query
   bot.on('callback_query', async (query) => {
     const chatId = query.message.chat.id;
@@ -342,6 +680,13 @@ function processUpdate(update) {
  */
 function getBot() {
   return bot;
+}
+
+/**
+ * Экранирование специальных символов для регулярного выражения
+ */
+function escapeRegex(string) {
+  return string.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
 
 module.exports = {
