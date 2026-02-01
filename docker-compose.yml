@@ -12,8 +12,8 @@ services:
       - NODE_ENV=production
       - PORT=3000
       - MONGO_URI=mongodb://admin:your_super_secret_password_123@mongo:27017/pocupochki_db?authSource=admin
-      - TELEGRAM_BOT_TOKEN=7723730232:AAGC_KGzydo0zBBo-Gt8ieP0MduwQSYHm5s
-      - OPENROUTER_API_KEY=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
+      - TELEGRAM_BOT_TOKEN=7723730232:AAGGplhHyYfreKQG4fTwwurAunX4Kx4rXLU
+      - OPENROUTER_API_KEY=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
       - WEBAPP_URL=https://shop.vetaone.site
       # ADMIN_TELEGRAM_ID - первый пользователь станет админом автоматически
     networks:
