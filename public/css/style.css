@@ -93,15 +93,60 @@ body.transition-to-main .page.edit-view { /* Уточняем селектор *
     box-shadow: 0 0 15px 5px rgba(83, 210, 44, 0.5);
 }
 
-/* Стили для D&D из вашего предыдущего edit.html */
-.drag-handle { cursor: grab; }
-.drag-handle:active { cursor: grabbing; }
-.store-section:not(:last-child) { margin-bottom: 1.5rem; } /* из edit.html */
-.dragging { opacity: 0.5; background: #3a4a36 !important; }
-.drag-over-store .product-items-container,
-.drag-over-main {
+/* Стили для SortableJS Drag & Drop */
+.store-section:not(:last-child) { margin-bottom: 1.5rem; }
+
+/* Ручки для перетаскивания */
+.store-drag-handle,
+.product-drag-handle {
+    cursor: grab;
+    touch-action: none;
+}
+.store-drag-handle:active,
+.product-drag-handle:active {
+    cursor: grabbing;
+}
+
+/* Элемент в процессе перетаскивания (оригинал, который остается на месте с прозрачностью) */
+.sortable-ghost {
+    opacity: 0.4;
+    background: #3a4a36 !important;
     border: 2px dashed #53d22c !important;
-    background-color: rgba(83, 210, 44, 0.1);
+}
+
+/* Элемент, который выбран для перетаскивания */
+.sortable-chosen {
+    background: #2d372a !important;
+    box-shadow: 0 8px 25px rgba(0, 0, 0, 0.3);
+    transform: scale(1.02);
+}
+
+/* Элемент, который перетаскивается (клон под курсором) */
+.sortable-drag {
+    opacity: 1 !important;
+    background: #3a4a36 !important;
+    box-shadow: 0 10px 30px rgba(0, 0, 0, 0.4);
+    border-radius: 0.75rem;
+}
+
+/* Подсветка drop-зон при перетаскивании товаров */
+.drop-zone-active {
+    border: 2px dashed #53d22c !important;
+    background-color: rgba(83, 210, 44, 0.08) !important;
+    transition: all 0.2s ease;
+}
+
+/* Минимальная высота для пустых контейнеров чтобы можно было сбросить туда товары */
+.product-items-container {
+    min-height: 60px;
+    border: 2px dashed transparent;
+    border-radius: 0.5rem;
+    transition: border-color 0.2s ease, background-color 0.2s ease;
+}
+
+/* Пустое сообщение в магазине */
+.empty-store-message {
+    user-select: none;
 }
 .custom-scrollbar::-webkit-scrollbar { width: 4px; height: 4px; }
 .custom-scrollbar::-webkit-scrollbar-thumb { background-color: #42513e; border-radius: 20px; }

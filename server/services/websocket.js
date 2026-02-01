@@ -119,6 +119,14 @@ async function handleMessage(ws, message, authTimeout) {
       await handleMoveItem(ws, payload);
       break;
 
+    case 'reorder-item':
+      await handleReorderItem(ws, payload);
+      break;
+
+    case 'reorder-stores':
+      await handleReorderStores(ws, payload);
+      break;
+
     case 'undo-last-action':
       await handleUndo(ws);
       break;
@@ -490,6 +498,87 @@ async function handleMoveItem(ws, payload) {
 }
 
 /**
+ * Переупорядочивание товара внутри магазина
+ */
+async function handleReorderItem(ws, payload) {
+  const data = connectionData.get(ws);
+  if (!data || !data.canEdit) return;
+
+  const { itemId, storeId, newIndex } = payload;
+  const item = await Item.findById(itemId);
+  if (!item || item.listId.toString() !== data.listId) return;
+
+  const previousOrder = item.order;
+
+  // Получаем все товары в магазине, отсортированные по порядку
+  const storeItems = await Item.find({ storeId }).sort({ order: 1 });
+
+  // Удаляем элемент из его текущей позиции
+  const currentIndex = storeItems.findIndex(i => i._id.toString() === itemId);
+  if (currentIndex === -1) return;
+
+  storeItems.splice(currentIndex, 1);
+
+  // Вставляем на новую позицию
+  storeItems.splice(newIndex, 0, item);
+
+  // Обновляем порядок всех элементов
+  const bulkOps = storeItems.map((i, index) => ({
+    updateOne: {
+      filter: { _id: i._id },
+      update: { $set: { order: index } }
+    }
+  }));
+
+  await Item.bulkWrite(bulkOps);
+
+  await ActionHistory.addEntry(
+    data.listId,
+    data.telegramId,
+    'REORDER_ITEM',
+    { itemId, storeId, previousOrder, newIndex },
+    `Товар "${item.name}" переупорядочен`
+  );
+
+  await broadcastListUpdate(data.listId);
+}
+
+/**
+ * Переупорядочивание магазинов
+ */
+async function handleReorderStores(ws, payload) {
+  const data = connectionData.get(ws);
+  if (!data || !data.canEdit) return;
+
+  const { storeOrders } = payload;
+  if (!storeOrders || !Array.isArray(storeOrders)) return;
+
+  // Сохраняем предыдущий порядок для отмены
+  const stores = await Store.findByListId(data.listId);
+  const previousOrders = stores.map(s => ({ storeId: s._id.toString(), order: s.order }));
+
+  // Обновляем порядок всех магазинов
+  const bulkOps = storeOrders.map(({ storeId, order }) => ({
+    updateOne: {
+      filter: { _id: storeId, listId: data.listId },
+      update: { $set: { order } }
+    }
+  }));
+
+  await Store.bulkWrite(bulkOps);
+
+  await ActionHistory.addEntry(
+    data.listId,
+    data.telegramId,
+    'REORDER_STORES',
+    { previousOrders, newOrders: storeOrders },
+    `Магазины переупорядочены`
+  );
+
+  await broadcastListUpdate(data.listId);
+}
+
+/**
  * Отмена последнего действия
  */
 async function handleUndo(ws) {
@@ -578,6 +667,24 @@ async function executeUndo(action) {
           storeId: payload.sourceStoreId,
           order: payload.previousOrder
         });
+      }
+      break;
+
+    case 'REORDER_ITEM':
+      if (payload.itemId && typeof payload.previousOrder !== 'undefined') {
+        await Item.findByIdAndUpdate(payload.itemId, { order: payload.previousOrder });
+      }
+      break;
+
+    case 'REORDER_STORES':
+      if (payload.previousOrders?.length) {
+        const bulkOps = payload.previousOrders.map(({ storeId, order }) => ({
+          updateOne: {
+            filter: { _id: storeId },
+            update: { $set: { order } }
+          }
+        }));
+        await Store.bulkWrite(bulkOps);
       }
       break;
   }

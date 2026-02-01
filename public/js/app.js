@@ -323,6 +323,15 @@ export function moveItem(itemId, sourceStoreId, targetStoreId, newIndex) {
   sendWebSocketMessage('move-item', { itemId, sourceStoreId, targetStoreId, newIndex });
 }
 
+export function reorderItem(itemId, storeId, newIndex) {
+  sendWebSocketMessage('reorder-item', { itemId, storeId, newIndex });
+}
+
+export function reorderStores(storeOrders) {
+  // storeOrders = [{ storeId: '...', order: 0 }, { storeId: '...', order: 1 }, ...]
+  sendWebSocketMessage('reorder-stores', { storeOrders });
+}
+
 // --- UI функции ---
 export function updateGlobalMicStatus(message, hideAfterMs = 0) {
   if (navMicStatus) {
