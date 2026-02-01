@@ -9,6 +9,9 @@ const { processTextCommand, processImageCommand } = require('./openrouterService
 let bot = null;
 let adminId = null;
 
+// Состояния пользователей для диалогов (chatId -> state)
+const userStates = new Map();
+
 /**
  * Инициализация бота
  */
@@ -416,6 +419,17 @@ function setupHandlers() {
     }
   });
 
+  // Команда /cancel для отмены текущего действия
+  bot.onText(/\/cancel/, async (msg) => {
+    const chatId = msg.chat.id;
+    if (userStates.has(chatId)) {
+      userStates.delete(chatId);
+      await bot.sendMessage(chatId, '❌ Действие отменено.');
+    } else {
+      await bot.sendMessage(chatId, 'Нечего отменять.');
+    }
+  });
+
   // Обработка текстовых сообщений (не команд)
   bot.on('text', async (msg) => {
     // Игнорируем команды
@@ -424,6 +438,89 @@ function setupHandlers() {
     const chatId = msg.chat.id;
     const telegramUser = msg.from;
     const text = msg.text.trim();
+
+    // Проверяем состояние пользователя
+    const state = userStates.get(chatId);
+
+    // Обработка ввода username для приглашения
+    if (state?.action === 'waiting_invite_username') {
+      userStates.delete(chatId);
+
+      try {
+        const { user } = await User.findOrCreateFromTelegram(telegramUser);
+
+        // Получаем дефолтный список владельца
+        const list = await List.findOne({ ownerId: user.telegramId, isDefault: true });
+        if (!list) {
+          await bot.sendMessage(chatId, '❌ У вас нет списка для приглашения.');
+          return;
+        }
+
+        // Ищем пользователя по username
+        const cleanUsername = text.replace('@', '').trim();
+        const targetUser = await User.findOne({ username: cleanUsername });
+
+        if (!targetUser) {
+          await bot.sendMessage(
+            chatId,
+            `❌ Пользователь @${cleanUsername} не найден.\n\n` +
+            'Убедитесь, что пользователь уже запускал бота командой /start.'
+          );
+          return;
+        }
+
+        if (targetUser.telegramId === user.telegramId) {
+          await bot.sendMessage(chatId, '❌ Нельзя пригласить самого себя.');
+          return;
+        }
+
+        // Проверяем, не добавлен ли уже
+        const alreadyShared = list.sharedWith.some(s => s.telegramId === targetUser.telegramId);
+        if (alreadyShared) {
+          await bot.sendMessage(chatId, `⚠️ @${cleanUsername} уже имеет доступ к вашему списку.`);
+          return;
+        }
+
+        // Добавляем пользователя
+        list.sharedWith.push({
+          telegramId: targetUser.telegramId,
+          canEdit: true
+        });
+        await list.save();
+
+        await bot.sendMessage(
+          chatId,
+          `✅ Пользователь @${cleanUsername} добавлен в ваш список!\n\n` +
+          `Теперь он может видеть и редактировать список "${list.name}".`
+        );
+
+        // Уведомляем приглашённого пользователя
+        try {
+          await bot.sendMessage(
+            targetUser.telegramId,
+            `📬 Вас пригласили в список покупок!\n\n` +
+            `👤 ${user.firstName} (@${user.username || 'нет'}) поделился с вами списком "${list.name}".\n\n` +
+            `Откройте приложение, чтобы увидеть общий список.`,
+            {
+              reply_markup: {
+                inline_keyboard: [[{
+                  text: '🛒 Открыть список',
+                  web_app: { url: process.env.WEBAPP_URL || 'https://shop.vetaone.site' }
+                }]]
+              }
+            }
+          );
+        } catch (e) {
+          // Пользователь мог заблокировать бота
+          console.warn('Could not notify invited user:', e.message);
+        }
+
+      } catch (error) {
+        console.error('Invite user error:', error);
+        await bot.sendMessage(chatId, '❌ Ошибка при добавлении пользователя.');
+      }
+      return;
+    }
 
     // Игнорируем пустые и короткие сообщения
     if (text.length < 2) return;
@@ -577,11 +674,16 @@ function setupHandlers() {
 
     try {
       if (data === 'share_invite') {
+        // Устанавливаем состояние ожидания ввода username
+        userStates.set(chatId, { action: 'waiting_invite_username' });
+
         await bot.answerCallbackQuery(query.id);
         await bot.sendMessage(
           chatId,
           '📨 Отправьте @username пользователя, которого хотите пригласить:\n\n' +
-          'Например: @username'
+          'Например: @username\n\n' +
+          '_Для отмены отправьте /cancel_',
+          { parse_mode: 'Markdown' }
         );
       }
 
@@ -608,6 +710,52 @@ function setupHandlers() {
 
         await bot.answerCallbackQuery(query.id);
         await bot.sendMessage(chatId, text, { parse_mode: 'Markdown' });
+      }
+
+      if (data === 'share_leave') {
+        const user = await User.findOne({ telegramId: query.from.id });
+        // Находим списки, где пользователь приглашён (не владелец)
+        const sharedLists = await List.find({
+          'sharedWith.telegramId': user.telegramId
+        });
+
+        if (sharedLists.length === 0) {
+          await bot.answerCallbackQuery(query.id);
+          await bot.sendMessage(chatId, '📋 Вы не состоите в чужих списках.');
+          return;
+        }
+
+        const keyboard = {
+          inline_keyboard: sharedLists.map(list => ([{
+            text: `🚪 Покинуть "${list.name}"`,
+            callback_data: `leave_list_${list._id}`
+          }]))
+        };
+
+        await bot.answerCallbackQuery(query.id);
+        await bot.sendMessage(
+          chatId,
+          '📋 *Выберите список, который хотите покинуть:*',
+          { parse_mode: 'Markdown', reply_markup: keyboard }
+        );
+      }
+
+      // Обработка выхода из конкретного списка
+      if (data.startsWith('leave_list_')) {
+        const listId = data.replace('leave_list_', '');
+        const list = await List.findById(listId);
+
+        if (list) {
+          list.sharedWith = list.sharedWith.filter(
+            s => s.telegramId !== query.from.id
+          );
+          await list.save();
+
+          await bot.answerCallbackQuery(query.id, { text: '✅ Вы покинули список' });
+          await bot.sendMessage(chatId, `✅ Вы покинули список "${list.name}".`);
+        } else {
+          await bot.answerCallbackQuery(query.id, { text: '❌ Список не найден' });
+        }
       }
 
       if (data === 'admin_users') {
