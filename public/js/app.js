@@ -199,25 +199,10 @@ function handleInitialData(payload) {
 function handleListUpdated(payload) {
   const { list, stores, items } = payload;
 
-  // Debug: логируем статус purchased для каждого товара
-  console.log('=== handleListUpdated ===');
-  console.log('Items received:', items?.length);
-  items?.forEach(item => {
-    console.log(`  - ${item.name}: purchased=${item.purchased}`);
-  });
-
   shoppingListData = {
     stores: transformToLegacyFormat(stores, items),
     activeStoreFilter: list?.activeStoreFilter || shoppingListData.activeStoreFilter
   };
-
-  // Debug: логируем после трансформации
-  console.log('After transform:');
-  shoppingListData.stores.forEach(store => {
-    store.items.forEach(item => {
-      console.log(`  - ${item.name}: purchased=${item.purchased}`);
-    });
-  });
 
   rerenderCurrentView();
   hapticFeedback('notification', 'success');

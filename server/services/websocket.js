@@ -367,12 +367,7 @@ async function handleTogglePurchased(ws, payload) {
   if (!item || item.listId.toString() !== data.listId) return;
 
   const wasPurchased = item.purchased;
-  console.log(`=== TOGGLE PURCHASED ===`);
-  console.log(`Item: ${item.name}, was: ${wasPurchased}, will be: ${!wasPurchased}`);
-
   await item.togglePurchased(data.telegramId);
-
-  console.log(`After toggle: ${item.name}, purchased=${item.purchased}`);
 
   await ActionHistory.addEntry(
     data.listId,
@@ -598,14 +593,6 @@ async function broadcastListUpdate(listId) {
     Item.findByListId(listId),
     ActionHistory.getRecent(listId, 50)
   ]);
-
-  // Debug: проверяем статус purchased для всех товаров
-  console.log('=== broadcastListUpdate ===');
-  console.log('List ID:', listId);
-  console.log('Items count:', items.length);
-  items.forEach(item => {
-    console.log(`  - ${item.name}: purchased=${item.purchased}, id=${item._id}`);
-  });
 
   broadcastToList(listId, {
     type: 'list-updated',
