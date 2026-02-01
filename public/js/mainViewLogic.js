@@ -1,5 +1,5 @@
 // public/js/mainViewLogic.js
-import { shoppingListData, saveData, navigateTo, addSwipeListeners, removeSwipeListeners } from './app.js';
+import { shoppingListData, saveData, navigateTo, addSwipeListeners, removeSwipeListeners, togglePurchased } from './app.js';
 
 // --- Переменные на уровне модуля для хранения ссылок на DOM-элементы ---
 let productListDiv,
@@ -197,20 +197,12 @@ function findProductById(productId) {
 function toggleProductPurchased(productId) {
     const result = findProductById(productId);
     if (result && result.product) {
-        const previousPurchasedState = result.product.purchased;
-        result.product.purchased = !result.product.purchased; // <--- СТАТУС В shoppingListData МЕНЯЕТСЯ
+        // Оптимистичное обновление локального состояния для быстрого UI
+        result.product.purchased = !result.product.purchased;
+        renderApp();
 
-        renderApp(); // Перерисовываем UI немедленно
-        saveData({
-            actionType: 'TOGGLE_PURCHASED',
-            payload: {
-                itemId: productId,
-                storeName: result.storeName,
-                wasPurchased: previousPurchasedState, // Предыдущее состояние
-                // isPurchased: result.product.purchased // Новое состояние (сервер может его не использовать, но полезно для логов)
-            },
-            description: `Товар '${result.product.name}' отмечен как ${result.product.purchased ? 'купленный' : 'не купленный'}`
-        });
+        // Отправляем команду на сервер - это сохранит изменение в БД
+        togglePurchased(productId);
     } else {
         console.warn(`Product with ID ${productId} not found for toggle.`);
     }
