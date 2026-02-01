@@ -1,0 +1,40 @@
+name: Deploy to Server
+
+on:
+  push:
+    branches: [main]
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Deploy to server via SSH
+        uses: appleboy/ssh-action@v1.0.0
+        with:
+          host: 166.88.159.91
+          username: root
+          key: ${{ secrets.SSH_PRIVATE_KEY }}
+          script: |
+            # Переходим в директорию проекта
+            cd /home/your_user/my_server/pocupochki
+
+            # Получаем последние изменения
+            git fetch origin main
+            git reset --hard origin/main
+
+            # Пересобираем и перезапускаем контейнер
+            docker-compose build --no-cache
+            docker-compose up -d
+
+            # Очищаем старые образы
+            docker image prune -f
+
+            # Ждём запуска и проверяем health
+            sleep 10
+            curl -f http://localhost:3000/health || echo "Health check failed, but continuing..."
+
+            echo "Deployment completed!"

@@ -2,26 +2,71 @@
 <html lang="ru">
 <head>
     <meta charset="utf-8"/>
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Список покупок</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Pocupochki - Список покупок</title>
     <link href="https://fonts.googleapis.com/css2?display=swap&family=Manrope%3Awght%40400%3B500%3B700%3B800&family=Noto+Sans%3Awght%40400%3B500%3B700%3B900" rel="stylesheet"/>
-    <link href="data:image/x-icon;base64," rel="icon" type="image/x-icon"/>
+    <link href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🛒</text></svg>" rel="icon"/>
     <link href="css/style.css" rel="stylesheet"/>
-    <!-- Tailwind CDN для простоты, в продакшене лучше собирать -->
+
+    <!-- Telegram Web App SDK -->
+    <script src="https://telegram.org/js/telegram-web-app.js"></script>
+
+    <!-- Tailwind CDN -->
     <script src="https://cdn.tailwindcss.com?plugins=forms,container-queries"></script>
+
     <style>
-        /* Можно оставить здесь специфичные для Tailwind хаки или небольшие переопределения, если Tailwind CDN используется */
+        /* Базовые стили */
         body {
-             font-family: Manrope, "Noto Sans", sans-serif; /* Tailwind не всегда подхватывает из link-ов для body */
+            font-family: Manrope, "Noto Sans", sans-serif;
+        }
+
+        /* Telegram Theme Variables */
+        :root {
+            --tg-theme-bg-color: #131712;
+            --tg-theme-text-color: #ffffff;
+            --tg-theme-hint-color: #a0aec0;
+            --tg-theme-link-color: #53d22c;
+            --tg-theme-button-color: #53d22c;
+            --tg-theme-button-text-color: #131712;
+            --tg-theme-secondary-bg-color: #1f251d;
+        }
+
+        /* Применение Telegram темы */
+        body {
+            background-color: var(--tg-theme-bg-color, #131712);
+            color: var(--tg-theme-text-color, #ffffff);
+        }
+
+        /* Safe area для iPhone */
+        body {
+            padding-bottom: env(safe-area-inset-bottom);
+        }
+
+        #bottom-navigation {
+            padding-bottom: env(safe-area-inset-bottom);
+        }
+
+        /* Анимация загрузки */
+        .loading-spinner {
+            animation: spin 1s linear infinite;
+        }
+
+        @keyframes spin {
+            from { transform: rotate(0deg); }
+            to { transform: rotate(360deg); }
         }
     </style>
 </head>
 <body class="bg-[#131712] text-white">
     <div id="app-container">
-        <!-- Сюда будут загружаться mainView.html и editView.html -->
+        <!-- Загрузка -->
+        <div class="flex flex-col items-center justify-center h-screen">
+            <div class="loading-spinner w-8 h-8 border-2 border-[#53d22c] border-t-transparent rounded-full mb-4"></div>
+            <p class="text-gray-400 text-sm">Загрузка...</p>
+        </div>
     </div>
 
-    <!-- Новое нижнее навигационное меню -->
+    <!-- Нижнее навигационное меню -->
     <nav id="bottom-navigation" class="fixed bottom-0 left-0 right-0 z-40 print:hidden">
         <div class="relative h-20 bg-[#1f251d]/80 backdrop-blur-md shadow-[0_-2px_10px_rgba(0,0,0,0.1)] rounded-t-3xl">
             <!-- Центральная кнопка микрофона -->
@@ -39,12 +84,12 @@
             <p id="navMicStatus" class="absolute left-1/2 -translate-x-1/2 text-center text-xs text-gray-400 pointer-events-none" style="top: calc(50% + 28px);"></p>
 
             <div class="flex items-center justify-between h-full px-4">
-                <!-- Кнопка "Отменить" (заменяет старую) -->
+                <!-- Кнопка "Отменить" -->
                 <button id="navUndoButton" class="flex-1 text-center text-[#a0aec0] hover:text-white transition-colors text-sm font-medium py-2" disabled>
                     Отменить (0)
                 </button>
 
-                <div class="w-20"></div> <!-- Пустое место под центральной кнопкой -->
+                <div class="w-20"></div>
 
                 <!-- Кнопка "Редактировать" / "Список" -->
                 <button id="navToggleButton" class="flex-1 text-center text-[#a0aec0] hover:text-white transition-colors text-sm font-medium py-2">
@@ -53,22 +98,7 @@
             </div>
         </div>
     </nav>
-    <!-- Небольшой отступ для контента, чтобы он не перекрывался меню -->
-     <!-- УДАЛИТЬ ЭТОТ DIV: <div class="h-20 print:hidden"></div> -->
 
-
-    <!-- Google GenAI SDK (лучше загружать только при необходимости на странице редактирования) -->
-    <script type="module">
-        // Ensure GoogleGenerativeAI is available globally
-        if (typeof window.GoogleGenerativeAI === 'undefined') {
-            try {
-                const genAIModule = await import('https://esm.run/@google/generative-ai');
-                window.GoogleGenerativeAI = genAIModule.GoogleGenerativeAI; // Assign the class itself
-            } catch (e) {
-                console.error("Failed to load GoogleGenerativeAI module:", e);
-            }
-        }
-    </script>
-      <script type="module" src="js/app.js"></script>
+    <script type="module" src="js/app.js"></script>
 </body>
 </html>

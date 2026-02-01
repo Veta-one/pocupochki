@@ -8,9 +8,8 @@ logs/
 npm-debug.log*
 pm2-*.log
 
-# Data files
+# Data files (old JSON storage)
 server/data/
-*.json
 
 # SSL certificates
 *.pem
@@ -20,9 +19,10 @@ server/data/
 # Environment variables
 .env
 .env.local
+.env.production
 
 # Old files and backups
-!old/
+old/
 *.zip
 *.bak
 
@@ -38,3 +38,7 @@ Thumbs.db
 
 # PM2
 .pm2/
+ecosystem.config.js
+
+# Plan files
+PLAN.md

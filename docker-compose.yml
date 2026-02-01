@@ -1,0 +1,29 @@
+# Docker Compose для Pocupochki
+# Запускать из директории /home/your_user/my_server/pocupochki/
+
+version: '3.8'
+
+services:
+  pocupochki:
+    build: .
+    container_name: pocupochki_app
+    restart: unless-stopped
+    environment:
+      - NODE_ENV=production
+      - PORT=3000
+      - MONGO_URI=mongodb://admin:your_super_secret_password_123@mongo:27017/pocupochki_db?authSource=admin
+      - TELEGRAM_BOT_TOKEN=7723730232:AAGC_KGzydo0zBBo-Gt8ieP0MduwQSYHm5s
+      - OPENROUTER_API_KEY=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
+      - WEBAPP_URL=https://shop.vetaone.site
+      # ADMIN_TELEGRAM_ID - первый пользователь станет админом автоматически
+    networks:
+      - my_server_caddy_net
+    deploy:
+      resources:
+        limits:
+          cpus: '0.50'
+          memory: '512M'
+
+networks:
+  my_server_caddy_net:
+    external: true

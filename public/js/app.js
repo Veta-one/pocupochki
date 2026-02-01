@@ -1,590 +1,648 @@
 // js/app.js
 import { initMainView, destroyMainView } from './mainViewLogic.js';
 import { initEditView, destroyEditView } from './editViewLogic.js';
+import {
+  initTelegramWebApp,
+  getInitData,
+  isTelegramWebApp,
+  showBackButton,
+  hideBackButton,
+  hapticFeedback,
+  showAlert
+} from './telegramWebApp.js';
+import {
+  authenticate,
+  authenticateDev,
+  getStoredToken,
+  setAuthToken,
+  getDefaultListId,
+  getCurrentUser,
+  processVoice
+} from './api.js';
 
 // --- Глобальное состояние приложения ---
-export let shoppingListData = { stores: [], activeStoreFilter: "Все" };
+export let shoppingListData = { stores: [], items: [], activeStoreFilter: "Все" };
 export let actionHistory = [];
+export let currentListId = null;
+export let currentUser = null;
+
 let currentPage = null;
-let socket;
+let socket = null;
+let authToken = null;
 
 const appContainer = document.getElementById('app-container');
-// Новые переменные для элементов меню
+
+// Элементы навигационного меню
 let navBottomNavigation, navMicButton, navMicIcon, navStopIcon, navUndoButton, navToggleButton, navMicStatus;
-let currentUndoButton; // Будет ссылаться либо на navUndoButton, либо на старый, если он еще есть
+let currentUndoButton;
+
+// Микрофон
+let mediaRecorderFromApp;
+let audioChunksFromApp = [];
+
+// --- Авторизация ---
+async function initAuth() {
+  // Пробуем получить сохранённый токен
+  const storedToken = getStoredToken();
+
+  // Инициализируем Telegram Web App
+  const tgData = initTelegramWebApp();
+
+  if (tgData && tgData.initData) {
+    // Мы в Telegram - авторизуемся через InitData
+    try {
+      updateGlobalMicStatus('Авторизация...');
+      const authData = await authenticate(tgData.initData);
+      authToken = authData.token;
+      currentUser = authData.user;
+      currentListId = authData.defaultListId;
+      console.log('Authenticated via Telegram:', currentUser.firstName);
+      return true;
+    } catch (error) {
+      console.error('Telegram authentication failed:', error);
+      showAlert('Ошибка авторизации. Попробуйте перезапустить приложение.');
+      return false;
+    }
+  } else if (storedToken) {
+    // Есть сохранённый токен - используем его
+    authToken = storedToken;
+    setAuthToken(storedToken);
+
+    // Получаем данные пользователя через API (при первом запросе)
+    try {
+      // Пробуем dev auth для получения user info
+      const authData = await authenticateDev();
+      currentUser = authData.user;
+      currentListId = authData.defaultListId;
+      console.log('Authenticated via stored token');
+      return true;
+    } catch (error) {
+      console.warn('Stored token invalid, clearing...');
+      setAuthToken(null);
+    }
+  }
+
+  // Dev mode - авторизуемся без Telegram
+  if (!isTelegramWebApp()) {
+    try {
+      console.log('Running in dev mode, authenticating...');
+      const authData = await authenticateDev();
+      authToken = authData.token;
+      currentUser = authData.user;
+      currentListId = authData.defaultListId;
+      console.log('Authenticated in dev mode:', currentUser.firstName);
+      return true;
+    } catch (error) {
+      console.error('Dev authentication failed:', error);
+      return false;
+    }
+  }
+
+  return false;
+}
 
 // --- WebSocket Управление ---
 function connectWebSocket() {
-    const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-    const wsUrl = `${protocol}//${window.location.host}`; // Сервер на том же хосте
+  if (!currentListId || !authToken) {
+    console.warn('Cannot connect WebSocket: no listId or token');
+    return;
+  }
 
-    socket = new WebSocket(wsUrl);
+  const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+  const wsUrl = `${protocol}//${window.location.host}`;
 
-    socket.onopen = () => {
-        console.log('WebSocket connection established.');
-        // Сервер должен прислать 'initial-data' при подключении
-    };
+  socket = new WebSocket(wsUrl);
 
-    socket.onmessage = (event) => {
-        try {
-            const message = JSON.parse(event.data);
-            console.log('WebSocket message received:', message.type, JSON.stringify(message.payload).substring(0,100) + "...", 'Current page:', currentPage);
+  socket.onopen = () => {
+    console.log('WebSocket connection established.');
+    // Авторизуемся по WebSocket
+    socket.send(JSON.stringify({
+      type: 'auth',
+      payload: {
+        token: authToken,
+        listId: currentListId
+      }
+    }));
+  };
 
-            if (message.type === 'initial-data') {
-                const oldListString = JSON.stringify(shoppingListData);
-                const newListData = message.payload;
-            
-                if (oldListString !== JSON.stringify(newListData)) { // Для initial-data проверка нужна
-                    console.log('Initial data received and is different, updating shoppingListData and rerendering.');
-                    shoppingListData = newListData; 
-            
-                    if (currentPage === 'main' && typeof initMainView === 'function') {
-                        console.log('Rerendering mainView for initial-data');
-                        if (typeof destroyMainView === 'function') destroyMainView(); 
-                        initMainView(true);
-                    } else if (currentPage === 'edit' && typeof initEditView === 'function') {
-                        console.log('Rerendering editView for initial-data');
-                        if (typeof destroyEditView === 'function') destroyEditView(); 
-                        initEditView(true);
-                    }
-                } else {
-                    console.log('Initial data received is identical to current shoppingListData. No rerender.');
-                }
-            } else if (message.type === 'list-updated') {
-                const newListData = message.payload;
-                console.log('List-updated received. Forcing shoppingListData update and rerender.');
-                
-                // Здесь мы принудительно обновляем shoppingListData и перерисовываем,
-                // так как даже если данные на клиенте-отправителе уже "актуальны" после локальной обработки,
-                // это сообщение от сервера является подтверждением и источником правды.
-                // Для других клиентов это будет обычное обновление.
-                shoppingListData = newListData; 
-            
-                if (currentPage === 'main' && typeof initMainView === 'function') {
-                    console.log('Rerendering mainView for list-updated');
-                    if (typeof destroyMainView === 'function') destroyMainView(); 
-                    initMainView(true);
-                } else if (currentPage === 'edit' && typeof initEditView === 'function') {
-                    console.log('Rerendering editView for list-updated');
-                    if (typeof destroyEditView === 'function') destroyEditView(); 
-                    initEditView(true);
-                }
-                 // После обновления списка, запросим обновленную историю
-                 // Это гарантирует, что счетчик Undo кнопки будет актуален
-                requestHistoryUpdate();
-
-            } else if (message.type === 'history-updated') {
-                console.log('History-updated received.');
-                actionHistory = message.payload;
-                updateUndoButtonState();
-            } else if (message.type === 'get-history') { // Если сервер присылает это в ответ на запрос клиента
-                console.log('Get-history response received (same as history-updated).');
-                actionHistory = message.payload;
-                updateUndoButtonState();
-            } else if (message.type === 'error') {
-                console.error('Server error via WebSocket:', message.payload);
-                alert(`Ошибка сервера: ${message.payload.message || 'Неизвестная ошибка'}`);
-            }
-
-        } catch (error) {
-            console.error('Error processing WebSocket message:', error, "Data:", event.data);
-        }
-    };
-
-    socket.onclose = (event) => {
-        console.log(`WebSocket connection closed (code: ${event.code}, reason: ${event.reason}). Attempting to reconnect...`);
-        setTimeout(connectWebSocket, 5000); // Попытка переподключения через 5 секунд
-    };
-
-    socket.onerror = (error) => {
-        console.error('WebSocket error:', error);
-        // onclose будет вызван после ошибки, инициируя переподключение
-    };
-}
-
-export function updateGlobalMicStatus(message, исчезновениеЧерезMs = 0) {
-    if (navMicStatus) {
-        navMicStatus.textContent = message;
-        if (исчезновениеЧерезMs > 0) {
-            setTimeout(() => {
-                if (navMicStatus && navMicStatus.textContent === message) { // Очищаем, только если сообщение не изменилось
-                    navMicStatus.textContent = "";
-                }
-            }, исчезновениеЧерезMs);
-        }
+  socket.onmessage = (event) => {
+    try {
+      const message = JSON.parse(event.data);
+      handleWebSocketMessage(message);
+    } catch (error) {
+      console.error('Error processing WebSocket message:', error);
     }
+  };
+
+  socket.onclose = (event) => {
+    console.log(`WebSocket closed (code: ${event.code}). Reconnecting in 5s...`);
+    setTimeout(connectWebSocket, 5000);
+  };
+
+  socket.onerror = (error) => {
+    console.error('WebSocket error:', error);
+  };
 }
 
-function requestHistoryUpdate() {
-    if (socket && socket.readyState === WebSocket.OPEN) {
-        socket.send(JSON.stringify({ type: 'get-history' }));
+function handleWebSocketMessage(message) {
+  console.log('WebSocket message:', message.type);
+
+  switch (message.type) {
+    case 'initial-data':
+      handleInitialData(message.payload);
+      break;
+
+    case 'list-updated':
+      handleListUpdated(message.payload);
+      break;
+
+    case 'history-updated':
+      actionHistory = message.payload.history || message.payload;
+      updateUndoButtonState();
+      break;
+
+    case 'user-presence':
+      console.log('User presence:', message.payload);
+      // Можно показывать кто онлайн
+      break;
+
+    case 'error':
+      console.error('Server error:', message.payload);
+      showAlert(`Ошибка: ${message.payload.message}`);
+      break;
+
+    case 'pong':
+      // Heartbeat response
+      break;
+
+    default:
+      console.warn('Unknown message type:', message.type);
+  }
+}
+
+function handleInitialData(payload) {
+  const { list, stores, items, history } = payload;
+
+  // Преобразуем в формат совместимый со старым кодом
+  shoppingListData = {
+    stores: transformToLegacyFormat(stores, items),
+    activeStoreFilter: list.activeStoreFilter || 'Все'
+  };
+
+  actionHistory = history || [];
+
+  rerenderCurrentView();
+  updateUndoButtonState();
+  updateGlobalMicStatus('');
+}
+
+function handleListUpdated(payload) {
+  const { list, stores, items } = payload;
+
+  shoppingListData = {
+    stores: transformToLegacyFormat(stores, items),
+    activeStoreFilter: list?.activeStoreFilter || shoppingListData.activeStoreFilter
+  };
+
+  rerenderCurrentView();
+  hapticFeedback('notification', 'success');
+}
+
+/**
+ * Преобразование нового формата (stores + items) в старый формат (stores с вложенными items)
+ */
+function transformToLegacyFormat(stores, items) {
+  const storesMap = new Map();
+
+  // Создаём карту магазинов
+  for (const store of stores) {
+    storesMap.set(store._id.toString(), {
+      name: store.name,
+      _id: store._id,
+      items: []
+    });
+  }
+
+  // Распределяем товары по магазинам
+  for (const item of items) {
+    const storeId = item.storeId?.toString() || item.storeId;
+    const store = storesMap.get(storeId);
+    if (store) {
+      store.items.push({
+        id: item._id,
+        _id: item._id,
+        name: item.name,
+        quantity: item.quantity,
+        unit: item.unit,
+        emoji: item.emoji,
+        notes: item.notes,
+        purchased: item.purchased,
+        storeId: item.storeId
+      });
     }
+  }
+
+  return Array.from(storesMap.values());
 }
 
-// --- Управление данными и историей ---
+function rerenderCurrentView() {
+  if (currentPage === 'main' && typeof initMainView === 'function') {
+    if (typeof destroyMainView === 'function') destroyMainView();
+    initMainView(true);
+  } else if (currentPage === 'edit' && typeof initEditView === 'function') {
+    if (typeof destroyEditView === 'function') destroyEditView();
+    initEditView(true);
+  }
+}
+
+// --- Управление данными ---
 export function generateId() {
-    return 'item_' + Date.now().toString(36) + Math.random().toString(36).substring(2, 7);
-}
-
-export function loadInitialData() {
-    // Начальные данные списка придут по WebSocket (сообщение 'initial-data')
-    // Загружаем историю через HTTP GET для кнопки "Отменить"
-    fetch('/api/history')
-        .then(response => {
-            if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`);
-            return response.json();
-        })
-        .then(data => {
-            actionHistory = data;
-            updateUndoButtonState();
-        })
-        .catch(error => {
-            console.error('Failed to load initial history data via HTTP:', error);
-            actionHistory = []; // Сброс в случае ошибки
-            updateUndoButtonState();
-        });
+  return 'item_' + Date.now().toString(36) + Math.random().toString(36).substring(2, 7);
 }
 
 export function saveData(actionDetailsForHistory = null) {
-    if (socket && socket.readyState === WebSocket.OPEN) {
-        // 1. Отправляем обновленный список на сервер
-        socket.send(JSON.stringify({ type: 'update-list', payload: shoppingListData }));
+  if (socket && socket.readyState === WebSocket.OPEN) {
+    // Отправляем обновление через WebSocket
+    socket.send(JSON.stringify({
+      type: 'update-list',
+      payload: { activeStoreFilter: shoppingListData.activeStoreFilter }
+    }));
 
-        // 2. Если есть детали для истории, отправляем их тоже
-        if (actionDetailsForHistory) {
-            if (!actionDetailsForHistory.timestamp) {
-                actionDetailsForHistory.timestamp = Date.now(); // Временная метка клиента
-            }
-            // Добавляем уникальный ID для записи истории, если его нет
-            if (!actionDetailsForHistory.id) {
-                actionDetailsForHistory.id = `hist_${generateId()}`;
-            }
+    // Если есть действие для истории
+    if (actionDetailsForHistory) {
+      actionDetailsForHistory.timestamp = Date.now();
+      actionDetailsForHistory.id = `hist_${generateId()}`;
 
-            socket.send(JSON.stringify({ type: 'add-history', payload: actionDetailsForHistory }));
-
-            // Оптимистичное обновление локальной истории для UI
-            actionHistory.unshift(actionDetailsForHistory);
-            updateUndoButtonState();
-        }
-    } else {
-        console.error('WebSocket not connected. Cannot save data.');
-        alert('Нет соединения с сервером. Изменения не сохранены.');
-        // TODO: Можно реализовать fallback в localStorage и попытку синхронизации позже.
+      // Оптимистичное обновление
+      actionHistory.unshift(actionDetailsForHistory);
+      updateUndoButtonState();
     }
+  } else {
+    console.error('WebSocket not connected');
+    showAlert('Нет соединения с сервером');
+  }
 }
 
-// --- Управление UI для "Отменить" ---
-function updateUndoButtonState() {
-    // currentUndoButton будет инициализирован в initAppUI
-    if (currentUndoButton) {
-        currentUndoButton.disabled = actionHistory.length === 0;
-        currentUndoButton.textContent = `Отменить (${actionHistory.length})`;
+// Методы для работы с WebSocket (для совместимости со старым кодом)
+export function sendWebSocketMessage(type, payload) {
+  if (socket && socket.readyState === WebSocket.OPEN) {
+    socket.send(JSON.stringify({ type, payload }));
+  }
+}
+
+export function addItem(storeId, item) {
+  sendWebSocketMessage('add-item', { storeId, ...item });
+}
+
+export function updateItem(itemId, updates) {
+  sendWebSocketMessage('update-item', { itemId, ...updates });
+}
+
+export function deleteItem(itemId) {
+  sendWebSocketMessage('delete-item', { itemId });
+}
+
+export function togglePurchased(itemId) {
+  sendWebSocketMessage('toggle-purchased', { itemId });
+  hapticFeedback('impact', 'light');
+}
+
+export function addStore(name) {
+  sendWebSocketMessage('add-store', { name });
+}
+
+export function updateStore(storeId, updates) {
+  sendWebSocketMessage('update-store', { storeId, ...updates });
+}
+
+export function deleteStore(storeId) {
+  sendWebSocketMessage('delete-store', { storeId });
+}
+
+export function moveItem(itemId, sourceStoreId, targetStoreId, newIndex) {
+  sendWebSocketMessage('move-item', { itemId, sourceStoreId, targetStoreId, newIndex });
+}
+
+// --- UI функции ---
+export function updateGlobalMicStatus(message, hideAfterMs = 0) {
+  if (navMicStatus) {
+    navMicStatus.textContent = message;
+    if (hideAfterMs > 0) {
+      setTimeout(() => {
+        if (navMicStatus && navMicStatus.textContent === message) {
+          navMicStatus.textContent = "";
+        }
+      }, hideAfterMs);
     }
+  }
+}
+
+function updateUndoButtonState() {
+  if (currentUndoButton) {
+    currentUndoButton.disabled = actionHistory.length === 0;
+    currentUndoButton.textContent = `Отменить (${actionHistory.length})`;
+  }
 }
 
 function handleUndoClick() {
-    if (actionHistory.length > 0 && socket && socket.readyState === WebSocket.OPEN) {
-        const actionToUndo = actionHistory[0];
-        socket.send(JSON.stringify({ type: 'undo-last-action', payload: { actionId: actionToUndo.id } }));
-    } else if (actionHistory.length === 0) {
-        console.log("No actions in history to undo.");
-    } else {
-        console.error("Cannot undo: WebSocket not connected or no history.");
-    }
+  if (actionHistory.length > 0 && socket && socket.readyState === WebSocket.OPEN) {
+    socket.send(JSON.stringify({ type: 'undo-last-action' }));
+    hapticFeedback('impact', 'medium');
+  }
 }
 
-// --- Управление кнопкой микрофона (общее для нового меню) ---// --- Управление кнопкой микрофона (общее для нового меню) ---
-let mediaRecorderFromApp; // Используем одну переменную для mediaRecorder
-let audioChunksFromApp = [];
-let geminiModelFromApp;
-let geminiSDKLoaded = false; // Флаг загрузки SDK
-let geminiSDKPromise = null; // Промис для ожидания загрузки
-
-// Функция для загрузки SDK, если еще не загружен
-function loadGeminiSDKIfNotLoaded() {
-    if (geminiSDKLoaded) return Promise.resolve(); // Уже загружен
-    if (geminiSDKPromise) return geminiSDKPromise; // Уже загружается
-
-    geminiSDKPromise = new Promise(async (resolve, reject) => {
-        if (typeof window.GoogleGenerativeAI === 'undefined') {
-            console.log("Attempting to load GoogleGenerativeAI SDK...");
-            try {
-                const genAIModule = await import('https://esm.run/@google/generative-ai');
-                window.GoogleGenerativeAI = genAIModule.GoogleGenerativeAI;
-                geminiSDKLoaded = true;
-                console.log("GoogleGenerativeAI SDK loaded successfully.");
-                resolve();
-            } catch (e) {
-                console.error("Failed to load GoogleGenerativeAI module:", e);
-                reject(e);
-            }
-        } else {
-            geminiSDKLoaded = true; // Уже был загружен (например, другим скриптом)
-            console.log("GoogleGenerativeAI SDK was already available.");
-            resolve();
-        }
-    });
-    return geminiSDKPromise;
-}
-
-
-async function initializeGlobalGemini() {
-    try {
-        await loadGeminiSDKIfNotLoaded(); // Дожидаемся загрузки SDK
-    } catch (e) {
-        console.error("Failed to ensure Gemini SDK is loaded before initializing model:", e);
-        if(navMicButton) navMicButton.disabled = true;
-        return null;
-    }
-    
-    // Теперь window.GoogleGenerativeAI должен быть доступен
-    if (typeof window.GoogleGenerativeAI === 'undefined') {
-        console.error("Critical: GoogleGenerativeAI is still undefined after load attempt.");
-        if(navMicButton) navMicButton.disabled = true;
-        return null;
-    }
-
-    const API_KEY = "YOUR_GEMINI_API_KEY"; // Получите ключ на https://makersuite.google.com/app/apikey
-    if (!API_KEY || API_KEY === "YOUR_GEMINI_API_KEY") {
-        console.error("API ключ Gemini не установлен.");
-        if(navMicButton) navMicButton.disabled = true;
-        return null;
-    }
-    try {
-        const genAI = new window.GoogleGenerativeAI(API_KEY);
-        if(navMicButton) navMicButton.disabled = false;
-        return genAI.getGenerativeModel({ model: "gemini-1.5-flash-latest" });
-    } catch (error) {
-        console.error("Error initializing Global Gemini model:", error);
-        if(navMicButton) navMicButton.disabled = true;
-        return null;
-    }
-}
-
-
+// --- Голосовой ввод ---
 async function handleGlobalMicButtonClick() {
-    if (!navMicButton || navMicButton.disabled) return;
+  if (!navMicButton || navMicButton.disabled) return;
 
-    if (!geminiModelFromApp) {
-        updateGlobalMicStatus("Инициализация Gemini..."); // <--- СТАТУС
-        console.log("Initializing Global Gemini for nav mic button...");
-        geminiModelFromApp = await initializeGlobalGemini();
-        if (!geminiModelFromApp) {
-            console.error("Global Gemini initialization failed for nav mic button.");
-            updateGlobalMicStatus("Ошибка инициализации!", 3000); // <--- СТАТУС
-            alert("Ошибка инициализации голосового ввода.");
-            return;
-        }
-        updateGlobalMicStatus(""); // <--- Очистка статуса
-        console.log("Global Gemini initialized for nav mic button.");
-    }
+  if (mediaRecorderFromApp && mediaRecorderFromApp.state === "recording") {
+    // Остановить запись
+    mediaRecorderFromApp.stop();
+    updateGlobalMicStatus("Обработка...");
+    navMicButton.classList.remove('recording', 'bg-red-500');
+    navMicButton.classList.add('bg-[#53d22c]');
+    if (navMicIcon) navMicIcon.classList.remove('hidden');
+    if (navStopIcon) navStopIcon.classList.add('hidden');
+  } else {
+    // Начать запись
+    try {
+      updateGlobalMicStatus("Запрос микрофона...");
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
 
-    if (mediaRecorderFromApp && mediaRecorderFromApp.state === "recording") {
-        mediaRecorderFromApp.stop();
-        updateGlobalMicStatus("Обработка аудио...", 0); // <--- СТАТУС (0 - не исчезать само)
+      const options = { mimeType: 'audio/webm;codecs=opus' };
+      if (!MediaRecorder.isTypeSupported(options.mimeType)) {
+        options.mimeType = 'audio/webm';
+        if (!MediaRecorder.isTypeSupported(options.mimeType)) options.mimeType = '';
+      }
+
+      mediaRecorderFromApp = new MediaRecorder(stream, options.mimeType ? options : undefined);
+      audioChunksFromApp = [];
+
+      mediaRecorderFromApp.ondataavailable = event => audioChunksFromApp.push(event.data);
+
+      mediaRecorderFromApp.onstop = async () => {
         navMicButton.classList.remove('recording', 'bg-red-500');
         navMicButton.classList.add('bg-[#53d22c]');
-        if(navMicIcon) navMicIcon.classList.remove('hidden');
-        if(navStopIcon) navStopIcon.classList.add('hidden');
-    } else {
-        try {
-            updateGlobalMicStatus("Запрос микрофона..."); // <--- СТАТУС
-            const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-            const options = { mimeType: 'audio/webm;codecs=opus' };
-            if (!MediaRecorder.isTypeSupported(options.mimeType)) {
-                options.mimeType = 'audio/webm';
-                if (!MediaRecorder.isTypeSupported(options.mimeType)) options.mimeType = '';
-            }
-            mediaRecorderFromApp = new MediaRecorder(stream, options.mimeType ? options : undefined);
-            audioChunksFromApp = [];
+        if (navMicIcon) navMicIcon.classList.remove('hidden');
+        if (navStopIcon) navStopIcon.classList.add('hidden');
 
-            mediaRecorderFromApp.ondataavailable = event => audioChunksFromApp.push(event.data);
+        updateGlobalMicStatus("Обработка...");
 
-            mediaRecorderFromApp.onstop = async () => {
-                navMicButton.classList.remove('recording', 'bg-red-500');
-                navMicButton.classList.add('bg-[#53d22c]');
-                if(navMicIcon) navMicIcon.classList.remove('hidden');
-                if(navStopIcon) navStopIcon.classList.add('hidden');
-                // Можно добавить: console.log("Processing audio...");
-
-                updateGlobalMicStatus("Обработка аудио...");
-
-                if (audioChunksFromApp.length === 0) { /* ... */ updateGlobalMicStatus("Нет аудио.", 2000); return; }
-                const audioBlob = new Blob(audioChunksFromApp, { type: mediaRecorderFromApp.mimeType || 'audio/webm' });
-                if (audioBlob.size === 0) { /* ... */ updateGlobalMicStatus("Пустой аудиофайл.", 2000); return; }
-
-                const reader = new FileReader();
-                reader.readAsDataURL(audioBlob);
-                reader.onloadend = async () => {
-                    const base64Audio = reader.result.split(',')[1];
-                    const audioMimeType = audioBlob.type || 'audio/webm';
-                    const fullCurrentListForProcessing = JSON.parse(JSON.stringify(shoppingListData));
-
-                    if (window.sendAudioToGeminiFromEditView) {
-                        updateGlobalMicStatus("Отправка в Gemini..."); // <--- СТАТУС
-                        console.log(`Processing voice command. Current page: ${currentPage}.`);
-                        window.sendAudioToGeminiFromEditView(base64Audio, audioMimeType, geminiModelFromApp, fullCurrentListForProcessing);
-                    } else {
-                        console.error("sendAudioToGeminiFromEditView is not available. Voice command cannot be processed.");
-                        alert("Ошибка: функция обработки голосовой команды не найдена.");
-                    }
-                };
-                reader.onerror = () => console.error("FileReader error for audio blob.");
-                stream.getTracks().forEach(track => track.stop());
-            };
-
-            mediaRecorderFromApp.onerror = (event) => {
-                console.error("MediaRecorder error:", event.error);
-                navMicButton.classList.remove('recording', 'bg-red-500');
-                navMicButton.classList.add('bg-[#53d22c]');
-                if(navMicIcon) navMicIcon.classList.remove('hidden');
-                if(navStopIcon) navStopIcon.classList.add('hidden');
-                stream.getTracks().forEach(track => track.stop());
-            };
-
-            mediaRecorderFromApp.start();
-            updateGlobalMicStatus("Говорите...");
-            navMicButton.classList.add('recording', 'bg-red-500');
-            navMicButton.classList.remove('bg-[#53d22c]');
-            if(navMicIcon) navMicIcon.classList.add('hidden');
-            if(navStopIcon) navStopIcon.classList.remove('hidden');
-            // Можно добавить: console.log("Recording started...");
-
-        } catch (err) {
-            console.error("Error accessing microphone:", err);
-            alert("Ошибка доступа к микрофону: " + err.message);
-            navMicButton.classList.remove('recording', 'bg-red-500');
-            navMicButton.classList.add('bg-[#53d22c]');
-            if(navMicIcon) navMicIcon.classList.remove('hidden');
-            if(navStopIcon) navStopIcon.classList.add('hidden');
-            updateGlobalMicStatus("Ошибка микрофона!", 3000);
+        if (audioChunksFromApp.length === 0) {
+          updateGlobalMicStatus("Нет аудио", 2000);
+          return;
         }
+
+        const audioBlob = new Blob(audioChunksFromApp, { type: mediaRecorderFromApp.mimeType || 'audio/webm' });
+        if (audioBlob.size === 0) {
+          updateGlobalMicStatus("Пустой файл", 2000);
+          return;
+        }
+
+        // Конвертируем в base64 и отправляем на сервер
+        const reader = new FileReader();
+        reader.readAsDataURL(audioBlob);
+        reader.onloadend = async () => {
+          const base64Audio = reader.result.split(',')[1];
+          const audioMimeType = audioBlob.type || 'audio/webm';
+
+          try {
+            updateGlobalMicStatus("Отправка...");
+            const result = await processVoice(currentListId, base64Audio, audioMimeType);
+
+            if (result.success) {
+              updateGlobalMicStatus(`+${result.created} товаров`, 3000);
+              hapticFeedback('notification', 'success');
+              // Данные придут через WebSocket
+            } else {
+              updateGlobalMicStatus("Ошибка", 3000);
+            }
+          } catch (error) {
+            console.error('Voice processing error:', error);
+            updateGlobalMicStatus("Ошибка API", 3000);
+            showAlert('Не удалось обработать голосовую команду');
+          }
+        };
+
+        stream.getTracks().forEach(track => track.stop());
+      };
+
+      mediaRecorderFromApp.onerror = (event) => {
+        console.error("MediaRecorder error:", event.error);
+        navMicButton.classList.remove('recording', 'bg-red-500');
+        navMicButton.classList.add('bg-[#53d22c]');
+        if (navMicIcon) navMicIcon.classList.remove('hidden');
+        if (navStopIcon) navStopIcon.classList.add('hidden');
+        stream.getTracks().forEach(track => track.stop());
+        updateGlobalMicStatus("Ошибка записи", 3000);
+      };
+
+      mediaRecorderFromApp.start();
+      updateGlobalMicStatus("Говорите...");
+      navMicButton.classList.add('recording', 'bg-red-500');
+      navMicButton.classList.remove('bg-[#53d22c]');
+      if (navMicIcon) navMicIcon.classList.add('hidden');
+      if (navStopIcon) navStopIcon.classList.remove('hidden');
+      hapticFeedback('impact', 'medium');
+
+    } catch (err) {
+      console.error("Error accessing microphone:", err);
+      showAlert("Ошибка доступа к микрофону: " + err.message);
+      updateGlobalMicStatus("Ошибка микрофона", 3000);
     }
+  }
 }
 
-// --- SPA Роутинг и управление View ---
+// --- SPA Роутинг ---
 async function loadViewHTML(viewName) {
-    try {
-        const response = await fetch(`partials/${viewName}.html`);
-        if (!response.ok) throw new Error(`Failed to load ${viewName}.html: ${response.statusText}`);
-        return await response.text();
-    } catch (error) {
-        console.error("Error loading view HTML:", error);
-        appContainer.innerHTML = `<p class="text-red-500 p-4">Ошибка загрузки контента: ${error.message}</p>`;
-        return null;
-    }
+  try {
+    const response = await fetch(`partials/${viewName}.html`);
+    if (!response.ok) throw new Error(`Failed to load ${viewName}.html`);
+    return await response.text();
+  } catch (error) {
+    console.error("Error loading view HTML:", error);
+    appContainer.innerHTML = `<p class="text-red-500 p-4">Ошибка загрузки: ${error.message}</p>`;
+    return null;
+  }
 }
 
 export async function navigateTo(path) {
-    const previousPageType = currentPage; // Запоминаем предыдущую страницу
+  const previousPageType = currentPage;
 
-    // 1. Очистка предыдущего View (если нужно, зависит от стратегии)
-    // Если вы полностью заменяете innerHTML, то destroy не так критичен для DOM, но для слушателей - да.
-    if (previousPageType === 'main' && typeof destroyMainView === 'function') destroyMainView();
-    if (previousPageType === 'edit' && typeof destroyEditView === 'function') destroyEditView();
+  if (previousPageType === 'main' && typeof destroyMainView === 'function') destroyMainView();
+  if (previousPageType === 'edit' && typeof destroyEditView === 'function') destroyEditView();
 
-    let newViewHTML = '';
-    let newPageType = '';
-    let initFunction = null;
+  let newViewHTML = '';
+  let newPageType = '';
+  let initFunction = null;
 
-    // Сначала убираем классы анимаций, если они были
-    document.body.classList.remove('transition-to-main', 'transition-to-edit');
+  document.body.classList.remove('transition-to-main', 'transition-to-edit');
 
-    if (path === '/' || path === 'index.html' || path === '#main') {
-        newPageType = 'main';
-        if (previousPageType === 'edit') { // Только если переходим с другой страницы
-            document.body.classList.add('transition-to-main');
-        }
-        document.body.classList.remove('edit-view-active');
-        document.body.classList.add('main-view-active');
-        newViewHTML = await loadViewHTML('mainView');
-        initFunction = initMainView;
-        if(navToggleButton) navToggleButton.textContent = 'Редактировать';
-    } else if (path === '#edit') {
-        newPageType = 'edit';
-        if (previousPageType === 'main') { // Только если переходим с другой страницы
-            document.body.classList.add('transition-to-edit');
-        }
-        document.body.classList.remove('main-view-active');
-        document.body.classList.add('edit-view-active');
-        newViewHTML = await loadViewHTML('editView');
-        initFunction = initEditView;
-        if(navToggleButton) navToggleButton.textContent = 'Список';
-    } else {
-        console.warn("Unknown path, redirecting to main:", path);
-        history.replaceState({ path: 'main' }, '', '#main');
-        
-        newPageType = 'main';
-        // При редиректе на главную, если это не было явным переходом с edit, не добавляем анимацию
-        if (previousPageType === 'edit') {
-             document.body.classList.add('transition-to-main');
-        }
-        document.body.classList.remove('edit-view-active');
-        document.body.classList.add('main-view-active');
-        newViewHTML = await loadViewHTML('mainView');
-        initFunction = initMainView;
-        if(navToggleButton) navToggleButton.textContent = 'Редактировать';
+  if (path === '/' || path === 'index.html' || path === '#main') {
+    newPageType = 'main';
+    if (previousPageType === 'edit') {
+      document.body.classList.add('transition-to-main');
     }
+    document.body.classList.remove('edit-view-active');
+    document.body.classList.add('main-view-active');
+    newViewHTML = await loadViewHTML('mainView');
+    initFunction = initMainView;
+    if (navToggleButton) navToggleButton.textContent = 'Редактировать';
 
-    if (!newViewHTML) return;
-
-    appContainer.innerHTML = newViewHTML;
-
-    if (window.location.hash !== path && (path === '#edit' || path === '#main')) {
-        // Используем replaceState, если мы просто исправляем URL на дефолтный, чтобы не засорять историю
-        if ((path === '#main' && (window.location.hash === '' || window.location.hash === '#')) ||
-            (path === '#edit' && window.location.hash === '')) {
-             history.replaceState({ path: newPageType }, '', path);
-        } else {
-            history.pushState({ path: newPageType }, '', path); // Упростим для примера
-        }
+    // Telegram BackButton
+    if (isTelegramWebApp()) {
+      hideBackButton();
     }
-    currentPage = newPageType;
+  } else if (path === '#edit') {
+    newPageType = 'edit';
+    if (previousPageType === 'main') {
+      document.body.classList.add('transition-to-edit');
+    }
+    document.body.classList.remove('main-view-active');
+    document.body.classList.add('edit-view-active');
+    newViewHTML = await loadViewHTML('editView');
+    initFunction = initEditView;
+    if (navToggleButton) navToggleButton.textContent = 'Список';
 
-    requestAnimationFrame(() => {
-        if (typeof initFunction === 'function') {
-            initFunction();
-        }
-        updateUndoButtonState();
-        // Убираем классы анимации после ее завершения (примерно через время transition)
-        // Можно использовать событие 'transitionend', но setTimeout проще для начала
-        setTimeout(() => {
-            document.body.classList.remove('transition-to-main', 'transition-to-edit');
-        }, 400); // 400ms - время вашей анимации
-    });
+    // Telegram BackButton
+    if (isTelegramWebApp()) {
+      showBackButton(() => navigateTo('#main'));
+    }
+  } else {
+    history.replaceState({ path: 'main' }, '', '#main');
+    return navigateTo('#main');
+  }
+
+  if (!newViewHTML) return;
+
+  appContainer.innerHTML = newViewHTML;
+
+  if (window.location.hash !== path) {
+    history.pushState({ path: newPageType }, '', path);
+  }
+
+  currentPage = newPageType;
+
+  requestAnimationFrame(() => {
+    if (typeof initFunction === 'function') {
+      initFunction();
+    }
+    updateUndoButtonState();
+    setTimeout(() => {
+      document.body.classList.remove('transition-to-main', 'transition-to-edit');
+    }, 400);
+  });
 }
 
 window.onpopstate = (event) => {
-    if (event.state && event.state.path) {
-        navigateTo(event.state.path === 'main' ? '#main' : '#edit');
-    } else {
-        // Если нет state, пробуем взять из hash или дефолт
-        navigateTo(window.location.hash || '#main');
-    }
+  if (event.state && event.state.path) {
+    navigateTo(event.state.path === 'main' ? '#main' : '#edit');
+  } else {
+    navigateTo(window.location.hash || '#main');
+  }
 };
+
+// Слушаем событие требования авторизации
+window.addEventListener('auth-required', () => {
+  console.log('Re-authentication required');
+  initAuth().then(() => connectWebSocket());
+});
 
 // --- Инициализация приложения ---
 function initAppUI() {
-    navBottomNavigation = document.getElementById('bottom-navigation');
-    navMicButton = document.getElementById('navMicButton');
-    navMicIcon = document.getElementById('navMicIcon');
-    navStopIcon = document.getElementById('navStopIcon');
-    navUndoButton = document.getElementById('navUndoButton');
-    navToggleButton = document.getElementById('navToggleButton');
-    navMicStatus = document.getElementById('navMicStatus'); // <--- Получаем элемент
+  navBottomNavigation = document.getElementById('bottom-navigation');
+  navMicButton = document.getElementById('navMicButton');
+  navMicIcon = document.getElementById('navMicIcon');
+  navStopIcon = document.getElementById('navStopIcon');
+  navUndoButton = document.getElementById('navUndoButton');
+  navToggleButton = document.getElementById('navToggleButton');
+  navMicStatus = document.getElementById('navMicStatus');
 
-    currentUndoButton = navUndoButton; // Теперь используем кнопку из нового меню
+  currentUndoButton = navUndoButton;
 
-    if (navUndoButton) {
-        navUndoButton.addEventListener('click', handleUndoClick);
-    }
-    if (navToggleButton) {
-        navToggleButton.addEventListener('click', () => {
-            if (currentPage === 'main') {
-                navigateTo('#edit');
-            } else {
-                navigateTo('#main');
-            }
-        });
-    }
-    if (navMicButton) {
-        navMicButton.addEventListener('click', handleGlobalMicButtonClick);
-    }
+  if (navUndoButton) {
+    navUndoButton.addEventListener('click', handleUndoClick);
+  }
+  if (navToggleButton) {
+    navToggleButton.addEventListener('click', () => {
+      navigateTo(currentPage === 'main' ? '#edit' : '#main');
+    });
+  }
+  if (navMicButton) {
+    navMicButton.addEventListener('click', handleGlobalMicButtonClick);
+  }
+  if (navBottomNavigation) {
+    addSwipeListeners(navBottomNavigation,
+      () => { if (currentPage === 'main') navigateTo('#edit'); },
+      () => { if (currentPage === 'edit') navigateTo('#main'); }
+    );
+  }
 
-    // Свайпы по самому меню для навигации
-    if (navBottomNavigation) {
-        addSwipeListeners(navBottomNavigation,
-            () => { if (currentPage === 'main') navigateTo('#edit'); }, // Swipe Left
-            () => { if (currentPage === 'edit') navigateTo('#main'); }  // Swipe Right
-        );
-    }
-    updateUndoButtonState();
+  updateUndoButtonState();
 }
 
-document.addEventListener('DOMContentLoaded', async () => { // Делаем обработчик async
-    initAppUI();
-    connectWebSocket();
-    loadInitialData();
+document.addEventListener('DOMContentLoaded', async () => {
+  initAppUI();
 
-    try {
-        // Инициализация Gemini после того, как SDK точно загружен
-        geminiModelFromApp = await initializeGlobalGemini(); // Дожидаемся инициализации модели
-        if (!geminiModelFromApp && navMicButton) {
-             console.warn("Global Gemini model could not be initialized on app load.");
-        } else if (geminiModelFromApp) {
-            console.log("Global Gemini model initialized successfully on app load.");
-        }
-    } catch (error) {
-        console.error("Error during initial Gemini model initialization:", error);
-    }
+  // Показываем загрузку
+  appContainer.innerHTML = '<div class="flex items-center justify-center h-screen"><p class="text-gray-400">Загрузка...</p></div>';
 
-    const initialPath = window.location.hash || '#main';
-    if (!['#main', '#edit'].includes(initialPath)) {
-        navigateTo('#main');
-    } else {
-        navigateTo(initialPath);
-    }
+  // Авторизация
+  const authSuccess = await initAuth();
+
+  if (!authSuccess) {
+    appContainer.innerHTML = '<div class="flex items-center justify-center h-screen"><p class="text-red-500">Ошибка авторизации</p></div>';
+    return;
+  }
+
+  // Подключаем WebSocket
+  connectWebSocket();
+
+  // Переходим на начальную страницу
+  const initialPath = window.location.hash || '#main';
+  navigateTo(['#main', '#edit'].includes(initialPath) ? initialPath : '#main');
 });
 
-
-// --- SWIPE GESTURES (вспомогательная функция) ---
+// --- Вспомогательные функции ---
 export function addSwipeListeners(element, onSwipeLeft, onSwipeRight) {
-    let touchstartX = 0;
-    let touchendX = 0;
-    const swipeThreshold = 70; // Минимальное смещение для свайпа
+  let touchstartX = 0;
+  const swipeThreshold = 70;
 
-    // Хранилище для обработчиков, чтобы их можно было удалить
-    if (!element._swipeHandlers) {
-        element._swipeHandlers = {};
+  if (!element._swipeHandlers) {
+    element._swipeHandlers = {};
+  }
+
+  if (element._swipeHandlers.touchstart) element.removeEventListener('touchstart', element._swipeHandlers.touchstart);
+  if (element._swipeHandlers.touchend) element.removeEventListener('touchend', element._swipeHandlers.touchend);
+
+  element._swipeHandlers.touchstart = e => {
+    const target = e.target;
+    if (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.closest('button') || target.closest('[draggable="true"]')) {
+      touchstartX = 0;
+      return;
     }
-    
-    // Удаляем предыдущие обработчики, если они были
-    if (element._swipeHandlers.touchstart) element.removeEventListener('touchstart', element._swipeHandlers.touchstart);
-    if (element._swipeHandlers.touchend) element.removeEventListener('touchend', element._swipeHandlers.touchend);
+    touchstartX = e.changedTouches[0].screenX;
+  };
 
+  element._swipeHandlers.touchend = e => {
+    if (touchstartX === 0) return;
+    const touchendX = e.changedTouches[0].screenX;
+    if (touchendX < touchstartX - swipeThreshold && onSwipeLeft) onSwipeLeft();
+    else if (touchendX > touchstartX + swipeThreshold && onSwipeRight) onSwipeRight();
+    touchstartX = 0;
+  };
 
-    element._swipeHandlers.touchstart = e => {
-        const targetTagName = e.target.tagName.toLowerCase();
-        const closestButton = e.target.closest('button');
-        const closestDraggable = e.target.closest('[draggable="true"]');
-        const closestScrollable = e.target.closest('.custom-scrollbar');
-
-
-        if (targetTagName === 'input' || 
-            targetTagName === 'textarea' || 
-            closestButton || 
-            (closestDraggable && e.target.closest('.drag-handle')) || // Если это ручка для D&D
-            closestScrollable) {
-            touchstartX = 0; // Отключаем свайп для интерактивных элементов или скролла
-            return;
-        }
-        touchstartX = e.changedTouches[0].screenX;
-    };
-
-    element._swipeHandlers.touchend = e => {
-        if (touchstartX === 0) return; // Свайп был отменен или не начат
-        touchendX = e.changedTouches[0].screenX;
-
-        if (touchendX < touchstartX - swipeThreshold && typeof onSwipeLeft === 'function') {
-            onSwipeLeft();
-        } else if (touchendX > touchstartX + swipeThreshold && typeof onSwipeRight === 'function') {
-            onSwipeRight();
-        }
-        touchstartX = 0; // Сброс для следующего касания
-    };
-    
-    element.addEventListener('touchstart', element._swipeHandlers.touchstart, { passive: true });
-    element.addEventListener('touchend', element._swipeHandlers.touchend, { passive: true });
+  element.addEventListener('touchstart', element._swipeHandlers.touchstart, { passive: true });
+  element.addEventListener('touchend', element._swipeHandlers.touchend, { passive: true });
 }
 
 export function removeSwipeListeners(element) {
-    if (element && element._swipeHandlers) {
-        if (element._swipeHandlers.touchstart) {
-            element.removeEventListener('touchstart', element._swipeHandlers.touchstart);
-        }
-        if (element._swipeHandlers.touchend) {
-            element.removeEventListener('touchend', element._swipeHandlers.touchend);
-        }
-        delete element._swipeHandlers;
-    }
+  if (element && element._swipeHandlers) {
+    if (element._swipeHandlers.touchstart) element.removeEventListener('touchstart', element._swipeHandlers.touchstart);
+    if (element._swipeHandlers.touchend) element.removeEventListener('touchend', element._swipeHandlers.touchend);
+    delete element._swipeHandlers;
+  }
 }
+
+// Экспорт для совместимости
+export { currentListId as listId };
