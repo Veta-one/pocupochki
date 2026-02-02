@@ -1,5 +1,5 @@
 // public/js/editViewLogic.js
-import { shoppingListData, saveData, generateId, navigateTo, addSwipeListeners, removeSwipeListeners, updateGlobalMicStatus, moveItem, reorderItem, reorderStores } from './app.js';
+import { shoppingListData, saveData, generateId, navigateTo, addSwipeListeners, removeSwipeListeners, updateGlobalMicStatus, moveItem, reorderItem, reorderStores, addStore as addStoreWS, updateStore as updateStoreWS, deleteStore as deleteStoreWS, deleteItem as deleteItemWS, updateItem as updateItemWS } from './app.js';
 import { hapticFeedback } from './telegramWebApp.js';
 
 // --- Переменные на уровне модуля для DOM-элементов и состояния ---
@@ -250,11 +250,10 @@ function createProductItemDOM(product, storeName, storeId) {
         const newNameTrimmed = e.target.value.trim();
         if (oldName !== newNameTrimmed && newNameTrimmed) {
             product.name = newNameTrimmed;
-            saveData({
-                actionType: 'UPDATE_ITEM_PROPERTY',
-                payload: { itemId: product.id, storeName: storeName, propertyName: 'name', previousValue: oldName, newValue: product.name },
-                description: `Продукт '${oldName}' переименован в '${product.name}'`
-            });
+            const itemId = (product._id || product.id)?.toString();
+            if (itemId) {
+                updateItemWS(itemId, { name: newNameTrimmed });
+            }
         } else if (!newNameTrimmed && oldName) {
             e.target.value = oldName;
         }
@@ -265,11 +264,10 @@ function createProductItemDOM(product, storeName, storeId) {
         const newUnitTrimmed = e.target.value.trim();
         if (oldUnit !== newUnitTrimmed && newUnitTrimmed) {
             product.unit = newUnitTrimmed;
-            saveData({
-                actionType: 'UPDATE_ITEM_PROPERTY',
-                payload: { itemId: product.id, storeName: storeName, propertyName: 'unit', previousValue: oldUnit, newValue: product.unit },
-                description: `Ед.изм. для '${product.name}' изменена: ${oldUnit} -> ${product.unit}`
-            });
+            const itemId = (product._id || product.id)?.toString();
+            if (itemId) {
+                updateItemWS(itemId, { unit: newUnitTrimmed });
+            }
         } else if (!newUnitTrimmed && oldUnit) {
             e.target.value = oldUnit;
         }
@@ -280,11 +278,10 @@ function createProductItemDOM(product, storeName, storeId) {
         const newNotesTrimmed = e.target.value.trim();
         if (oldNotes !== newNotesTrimmed) {
             product.notes = newNotesTrimmed;
-            saveData({
-                actionType: 'UPDATE_ITEM_PROPERTY',
-                payload: { itemId: product.id, storeName: storeName, propertyName: 'notes', previousValue: oldNotes, newValue: product.notes },
-                description: `Заметка для '${product.name}' изменена.`
-            });
+            const itemId = (product._id || product.id)?.toString();
+            if (itemId) {
+                updateItemWS(itemId, { notes: newNotesTrimmed });
+            }
         }
     });
 
@@ -410,17 +407,10 @@ function updateQuantity(product, change, quantityValueElement, storeName) {
     if (product.quantity !== currentQuantity) {
         product.quantity = currentQuantity;
         if(quantityValueElement) quantityValueElement.textContent = product.quantity;
-        saveData({
-            actionType: 'UPDATE_ITEM_PROPERTY',
-            payload: {
-                itemId: product.id,
-                storeName: storeName,
-                propertyName: 'quantity',
-                previousValue: oldQuantity,
-                newValue: product.quantity
-            },
-            description: `Изменено кол-во ${product.name}: ${oldQuantity} -> ${product.quantity}`
-        });
+        const itemId = (product._id || product.id)?.toString();
+        if (itemId) {
+            updateItemWS(itemId, { quantity: currentQuantity });
+        }
     }
 }
 
@@ -438,16 +428,17 @@ function updateStoreName(oldName, newName, inputElement) {
     }
     const storeToUpdate = shoppingListData.stores.find(s => s.name === oldName);
     if (storeToUpdate) {
+        // Оптимистичное обновление локального состояния
         storeToUpdate.name = newName;
         if (shoppingListData.activeStoreFilter === oldName) {
             shoppingListData.activeStoreFilter = newName;
         }
         renderEditScreenDOM();
-        saveData({
-            actionType: 'UPDATE_STORE_NAME',
-            payload: { previousStoreName: oldName, newStoreName: newName },
-            description: `Магазин переименован: ${oldName} -> ${newName}`
-        });
+
+        // Отправляем на сервер через WebSocket
+        if (storeToUpdate._id) {
+            updateStoreWS(storeToUpdate._id.toString(), { name: newName });
+        }
     }
 }
 
@@ -456,37 +447,40 @@ function deleteStore(storeName) {
     if (storeIndex === -1) return;
 
     if (confirm(`Вы уверены, что хотите удалить магазин "${storeName}" и все его товары?`)) {
-        const deletedStore = JSON.parse(JSON.stringify(shoppingListData.stores[storeIndex]));
+        const deletedStore = shoppingListData.stores[storeIndex];
+        const storeId = deletedStore._id?.toString();
 
+        // Оптимистичное обновление локального состояния
         shoppingListData.stores.splice(storeIndex, 1);
         if (shoppingListData.activeStoreFilter === storeName) {
             shoppingListData.activeStoreFilter = "Все";
         }
-
         renderEditScreenDOM();
-        saveData({
-            actionType: 'DELETE_STORE',
-            payload: { deletedStoreData: deletedStore, originalIndex: storeIndex },
-            description: `Удален магазин: ${storeName}`
-        });
+
+        // Отправляем на сервер через WebSocket
+        if (storeId) {
+            deleteStoreWS(storeId);
+        }
     }
 }
 
 function deleteProduct(productId, storeName) {
     const store = shoppingListData.stores.find(s => s.name === storeName);
     if (store) {
-        const itemIndex = store.items.findIndex(item => item.id === productId);
+        const itemIndex = store.items.findIndex(item => (item.id === productId) || (item._id?.toString() === productId));
         if (itemIndex === -1) return;
 
-        const deletedItem = JSON.parse(JSON.stringify(store.items[itemIndex]));
+        const deletedItem = store.items[itemIndex];
+        const itemId = (deletedItem._id || deletedItem.id)?.toString();
 
+        // Оптимистичное обновление локального состояния
         store.items.splice(itemIndex, 1);
         renderEditScreenDOM();
-        saveData({
-            actionType: 'DELETE_ITEM',
-            payload: { deletedItem: deletedItem, storeName: storeName, originalIndex: itemIndex },
-            description: `Удален продукт: ${deletedItem.name} из ${storeName}`
-        });
+
+        // Отправляем на сервер через WebSocket
+        if (itemId) {
+            deleteItemWS(itemId);
+        }
     }
 }
 
@@ -705,14 +699,14 @@ function handleAddStoreClick() {
     while (shoppingListData.stores.find(s => s.name === newStoreName)) {
         newStoreName = `Новый магазин ${counter++}`;
     }
+
+    // Оптимистичное обновление локального состояния
     const newStore = { name: newStoreName, items: [] };
     shoppingListData.stores.push(newStore);
     renderEditScreenDOM();
-    saveData({
-        actionType: 'ADD_STORE',
-        payload: { storeName: newStoreName, addedStoreData: newStore },
-        description: `Добавлен магазин: ${newStoreName}`
-    });
+
+    // Отправляем на сервер через WebSocket
+    addStoreWS(newStoreName);
 }
 
 export function destroyEditView() {
