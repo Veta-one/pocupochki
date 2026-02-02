@@ -26,15 +26,20 @@ jobs:
             git fetch origin main
             git reset --hard origin/main
 
-            # Пересобираем и перезапускаем контейнер
-            docker-compose build --no-cache
-            docker-compose up -d
+            # Останавливаем и удаляем старый контейнер
+            docker-compose down --remove-orphans
 
-            # Очищаем старые образы
-            docker image prune -f
+            # Пересобираем образ
+            docker-compose build --no-cache
+
+            # Запускаем новый контейнер
+            docker-compose up -d
 
             # Ждём запуска и проверяем health
             sleep 10
             curl -f http://localhost:3000/health || echo "Health check failed, but continuing..."
+
+            # Очищаем старые образы только после успешного запуска
+            docker image prune -f
 
             echo "Deployment completed!"
