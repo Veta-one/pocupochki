@@ -43,3 +43,6 @@ ecosystem.config.js
 # Plan files
 PLAN.md
 CLAUDE.md
+
+# Claude Code workspace
+.claude/
